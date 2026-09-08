@@ -1,0 +1,25 @@
+fastapi==0.115.0
+starlette==0.38.6
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+pydantic-settings==2.5.2
+sqlalchemy==2.0.35
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.9
+httpx==0.27.2
+aiofiles==24.1.0
+Pillow==10.4.0
+python-dotenv==1.0.1
+pytest==8.3.3
+pytest-asyncio==0.24.0
+# Google Earth Engine (Sentinel-2 NDVI). Optional: the satellite service
+# degrades to status="not_configured" if this is absent, so the rest of the
+# app runs without it.
+earthengine-api==1.1.2
+# Server-side text-to-speech. Required for Tamil and Hindi voice output on
+# devices with no system voice packs installed (i.e. most phones).
+gTTS==2.5.4
+# Browser push notifications. Optional: alerts stay in-app if absent.
+pywebpush==2.0.0

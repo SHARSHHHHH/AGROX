@@ -1,0 +1,20 @@
+# Local model extras — needed for LLM_PROVIDER=qwen and/or
+# VISION_PROVIDER=huggingface.
+#
+# These are large: torch alone is ~800 MB and the Qwen weights ~3 GB. Install
+# only if you intend to run models locally. The Gemini providers need none of
+# this.
+#
+#   pip install -r requirements-qwen.txt
+#
+# For CPU-only (a much smaller download), install torch first from:
+#   https://pytorch.org/get-started/locally/
+transformers>=4.44.0
+torch>=2.2.0
+accelerate>=0.33.0
+sentencepiece>=0.2.0
+
+# REQUIRED for the local vision provider. transformers' AutoImageProcessor
+# raises ImportError without it, which surfaces as "vision model load_failed"
+# rather than an obvious missing-package error.
+torchvision>=0.17.0
