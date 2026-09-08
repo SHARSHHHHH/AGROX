@@ -144,7 +144,9 @@ def _generate_sync(system_prompt: str, user_prompt: str,
     text = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True)
 
-    inputs = tokenizer([text], return_tensors="pt").to(device)
+    inputs = tokenizer([text], return_tensors="pt")
+    inputs.pop("token_type_ids", None)
+    inputs = inputs.to(device)
 
     # temperature=0 means greedy; sampling with temperature 0 is undefined.
     do_sample = temperature > 0.01

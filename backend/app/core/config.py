@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     # the network blocks Google anyway, or when you want zero API keys.
     VISION_ALLOW_FALLBACK: bool = True
 
+    # Cosine-similarity threshold for resolving an unfamiliar pest label to
+    # the curated knowledge base.
+    PEST_SEMANTIC_MATCH_THRESHOLD: float = 0.78
+
     # --- Data sources -------------------------------------------------
     # When true, market/fertilizer services may return clearly MOCK-tagged
     # sample rows for demos. In production leave this false so the services

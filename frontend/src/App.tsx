@@ -23,7 +23,11 @@ import Analytics from './pages/Analytics'
 import Admin from './pages/Admin'
 import Sell from './pages/Sell'
 import Marketplace from './pages/Marketplace'
-import MyOrders from './pages/MyOrders'
+import LandContractors from './pages/LandContractors'
+import FarmerLand from './pages/FarmerLand'
+import HarvestCalendar from './pages/HarvestCalendar'
+import PreBooking from './pages/PreBooking'
+import Notifications from './pages/Notifications'
 
 function Protected({ children }: { children: JSX.Element }) {
   return getUser() ? <Layout>{children}</Layout> : <Navigate to="/login" />
@@ -94,13 +98,17 @@ export default function App() {
       <Route path="/schemes" element={<Personalized><Schemes /></Personalized>} />
       <Route path="/alerts" element={<Personalized><Alerts /></Personalized>} />
       <Route path="/analytics" element={<Personalized><Analytics /></Personalized>} />
-      <Route path="/settings" element={<Protected><Settings /></Protected>} />
-      <Route path="/admin" element={<Protected><Admin /></Protected>} />
+      <Route path="/farmer-land" element={<Protected><FarmerLand /></Protected>} />
       {/* Sell produce direct to buyers (farmer side) and the buyer-facing
           marketplace + their own order history — see the "buyer" role. */}
       <Route path="/sell" element={<Protected><Sell /></Protected>} />
       <Route path="/marketplace" element={<Protected><Marketplace /></Protected>} />
-      <Route path="/my-orders" element={<Protected><MyOrders /></Protected>} />
+      <Route path="/harvest-calendar" element={<Protected><HarvestCalendar /></Protected>} />
+      <Route path="/pre-booking" element={<Protected><PreBooking /></Protected>} />
+      <Route path="/notifications" element={<Protected><Notifications /></Protected>} />
+      <Route path="/land-contractors" element={<Protected><LandContractors /></Protected>} />
+      <Route path="/settings" element={<Protected><Settings /></Protected>} />
+      <Route path="/admin" element={<Protected><Admin /></Protected>} />
       <Route path="/" element={<Navigate to={landingFor(user)} />} />
       <Route path="*" element={<Navigate to={landingFor(user)} />} />
       </Routes>

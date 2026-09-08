@@ -16,8 +16,8 @@ const STATUS_COLORS: Record<string, string> = {
   Poor: 'bg-red-100 text-red-800 border-red-200',
 }
 
-export function StatusPill({ status }: { status: string }) {
-  const cls = STATUS_COLORS[status] || 'bg-gray-100 text-gray-700 border-gray-200'
+export function StatusPill({ status, colors }: { status: string; colors?: Record<string, string> }) {
+  const cls = colors?.[status] || STATUS_COLORS[status] || 'bg-gray-100 text-gray-700 border-gray-200'
   return (
     <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold border ${cls}`}>
       {status}
@@ -69,19 +69,20 @@ export function Empty({ msg }: { msg: string }) {
 }
 
 export function Button({
-  children, onClick, variant = 'primary', disabled, type = 'button',
+  children, onClick, variant = 'primary', disabled, type = 'button', className = '',
 }: {
-  children: ReactNode; onClick?: () => void; variant?: 'primary' | 'ghost' | 'danger'
-  disabled?: boolean; type?: 'button' | 'submit'
+  children: ReactNode; onClick?: () => void; variant?: 'primary' | 'ghost' | 'danger' | 'outline'
+  disabled?: boolean; type?: 'button' | 'submit'; className?: string
 }) {
   const base = 'px-4 py-2 rounded-xl font-semibold text-sm transition disabled:opacity-50'
   const styles = {
     primary: 'bg-field-600 text-white hover:bg-field-700',
     ghost: 'bg-field-50 text-field-700 hover:bg-field-100',
     danger: 'bg-red-500 text-white hover:bg-red-600',
+    outline: 'border border-gray-300 text-gray-700 hover:bg-gray-50',
   }
   return (
-    <button type={type} onClick={onClick} disabled={disabled} className={`${base} ${styles[variant]}`}>
+    <button type={type} onClick={onClick} disabled={disabled} className={`${base} ${styles[variant]} ${className}`}>
       {children}
     </button>
   )

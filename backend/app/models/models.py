@@ -29,6 +29,9 @@ class User(Base):
     alerts = relationship("Alert", back_populates="user", cascade="all, delete")
     machinery_listings = relationship("MachineryListing", back_populates="owner",
                                       cascade="all, delete")
+    notifications = relationship("Notification", back_populates="recipient",
+                                 foreign_keys="Notification.recipient_id",
+                                 cascade="all, delete")
 
 
 class Farm(Base):
@@ -158,6 +161,150 @@ class PestObservation(Base):
     created_at = Column(DateTime, default=now, index=True)
 
     user = relationship("User")
+
+
+class LandListing(Base):
+    __tablename__ = "land_listings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    farmer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    title = Column(String, default="")
+    description = Column(Text, default="")
+    state = Column(String, index=True, default="")
+    district = Column(String, index=True, default="")
+    village = Column(String, default="")
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    area_acres = Column(Float, default=1.0)
+    soil_type = Column(String, default="")
+    water_source = Column(String, default="")
+    irrigation_available = Column(Boolean, default=False)
+    suitable_crops = Column(JSON, default=list)
+    price_per_acre_per_season = Column(Float, default=0.0)
+    min_season_months = Column(Integer, default=1)
+    max_season_months = Column(Integer, default=12)
+    available_from = Column(DateTime, nullable=True)
+    status = Column(String, default="available", index=True)
+    contact_phone = Column(String, default="")
+    image_path = Column(String, default="")
+    views = Column(Integer, default=0)
+    created_at = Column(DateTime, default=now, index=True)
+    updated_at = Column(DateTime, default=now, onupdate=now)
+
+    farmer = relationship("User", foreign_keys=[farmer_id])
+    contracts = relationship("LandContract", back_populates="listing", cascade="all, delete")
+
+
+class LandContract(Base):
+    __tablename__ = "land_contracts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    listing_id = Column(Integer, ForeignKey("land_listings.id"), nullable=False)
+    buyer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    farmer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    start_date = Column(DateTime, nullable=False)
+    end_date = Column(DateTime, nullable=False)
+    agreed_crop = Column(String, default="")
+    price_per_acre = Column(Float, default=0.0)
+    total_price = Column(Float, default=0.0)
+    status = Column(String, default="pending", index=True)
+    terms_accepted = Column(Boolean, default=False)
+    farmer_notes = Column(Text, default="")
+    buyer_notes = Column(Text, default="")
+    created_at = Column(DateTime, default=now, index=True)
+    updated_at = Column(DateTime, default=now, onupdate=now)
+
+    listing = relationship("LandListing", back_populates="contracts")
+    buyer = relationship("User", foreign_keys=[buyer_id])
+    farmer = relationship("User", foreign_keys=[farmer_id])
+    messages = relationship("ContractMessage", back_populates="contract", cascade="all, delete")
+
+
+class ContractMessage(Base):
+    __tablename__ = "contract_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    contract_id = Column(Integer, ForeignKey("land_contracts.id"), nullable=False)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=now, index=True)
+
+    contract = relationship("LandContract", back_populates="messages")
+    sender = relationship("User", foreign_keys=[sender_id])
+
+
+class HarvestCalendar(Base):
+    __tablename__ = "harvest_calendars"
+    id = Column(Integer, primary_key=True, index=True)
+    farm_id = Column(Integer, ForeignKey("farms.id"), nullable=False)
+    farmer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    crop = Column(String, index=True, default="")
+    variety = Column(String, default="")
+    sowing_date = Column(DateTime, nullable=True)
+    expected_harvest_date = Column(DateTime, nullable=True, index=True)
+    estimated_quantity_kg = Column(Float, nullable=True)
+    unit_of_measure = Column(String, default="kg")
+    expected_min_price = Column(Float, nullable=True)
+    expected_max_price = Column(Float, nullable=True)
+    plot_size_acres = Column(Float, default=1.0)
+    soil_type = Column(String, default="")
+    irrigation_type = Column(String, default="")
+    status = Column(String, default="planning", index=True)
+    notes = Column(Text, default="")
+    created_at = Column(DateTime, default=now, index=True)
+    updated_at = Column(DateTime, default=now, onupdate=now)
+
+    farm = relationship("Farm")
+    farmer = relationship("User")
+    pre_bookings = relationship("PreBooking", back_populates="harvest", cascade="all, delete")
+    messages = relationship("HarvestMessage", back_populates="harvest", cascade="all, delete")
+
+
+class PreBooking(Base):
+    __tablename__ = "pre_bookings"
+    id = Column(Integer, primary_key=True, index=True)
+    harvest_id = Column(Integer, ForeignKey("harvest_calendars.id"), nullable=False)
+    buyer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    quantity_kg = Column(Float, nullable=True)
+    agreed_price_per_kg = Column(Float, nullable=True)
+    delivery_date = Column(DateTime, nullable=True)
+    delivery_location = Column(String, default="")
+    status = Column(String, default="requested", index=True)
+    buyer_message = Column(Text, default="")
+    farmer_response = Column(Text, default="")
+    created_at = Column(DateTime, default=now, index=True)
+    updated_at = Column(DateTime, default=now, onupdate=now)
+
+    harvest = relationship("HarvestCalendar", back_populates="pre_bookings")
+    buyer = relationship("User")
+
+
+class HarvestMessage(Base):
+    __tablename__ = "harvest_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    harvest_id = Column(Integer, ForeignKey("harvest_calendars.id"), nullable=False)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=now, index=True)
+
+    harvest = relationship("HarvestCalendar", back_populates="messages")
+    sender = relationship("User", foreign_keys=[sender_id])
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    id = Column(Integer, primary_key=True, index=True)
+    recipient_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    notification_type = Column(String, default="general", index=True)
+    title = Column(String, default="")
+    message = Column(Text, default="")
+    source_message_id = Column(Integer, ForeignKey("harvest_messages.id"), nullable=True, index=True)
+    harvest_id = Column(Integer, ForeignKey("harvest_calendars.id"), nullable=True, index=True)
+    url = Column(String, default="")
+    read_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=now, index=True)
+
+    recipient = relationship("User", back_populates="notifications",
+                             foreign_keys=[recipient_id])
 
 
 class MachineryListing(Base):

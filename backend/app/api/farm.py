@@ -33,18 +33,6 @@ def get_farm(farm_id: int, user: User = Depends(get_current_user),
 @router.put("/{farm_id}", response_model=FarmOut)
 def update_farm(farm_id: int, data: FarmIn, user: User = Depends(get_current_user),
                 db: Session = Depends(get_db)):
-    """Update a farm, touching ONLY the fields the caller actually sent.
-
-    `model_dump()` fills every unsent field with its schema default, so a
-    caller updating just the crop would also write sowing_date=None,
-    crop_area_acres=None and previous_crop="" over real data. That was
-    survivable while FarmIn listed only a handful of fields; now that it
-    carries the full onboarding set, a partial save would quietly destroy the
-    farmer's sowing date and sown area — and the lifecycle, harvest date and
-    fertiliser quantities computed from them.
-
-    exclude_unset keeps an omitted field omitted.
-    """
     farm = db.query(Farm).filter(Farm.id == farm_id, Farm.user_id == user.id).first()
     if not farm:
         raise HTTPException(404, "Farm not found")

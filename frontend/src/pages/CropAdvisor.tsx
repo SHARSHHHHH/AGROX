@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
 import {
   getCropList, getCropStage, getLifecycle, getSeason,
   recommendAdvisory, getMyCropStage, getSoil, getOnboardingStatus,
@@ -41,11 +40,7 @@ function FactorBar({ label, value }: { label: string; value: number }) {
 export default function CropAdvisor() {
   const { t, tv } = useLanguage()
   const { publish } = usePageContext()
-  // Honour ?tab=lifecycle so "View full lifecycle" on the dashboard opens
-  // the lifecycle tab directly instead of the ranking.
-  const [params] = useSearchParams()
-  const [tab, setTab] = useState<'suggest' | 'lifecycle'>(
-    params.get('tab') === 'lifecycle' ? 'lifecycle' : 'suggest')
+  const [tab, setTab] = useState<'suggest' | 'lifecycle'>('suggest')
 
   // --- suitability ---
   const [season, setSeason] = useState('')
@@ -300,35 +295,14 @@ export default function CropAdvisor() {
 
             {result && (
               <div className="space-y-3">
-                {/* Confidence as a bar plus a count. "based on 0 measured
-                    value(s)" was technically true for a farmer with no soil
-                    test and no sensor, but it read like a broken counter
-                    rather than an instruction — so when nothing has been
-                    measured the panel now says what to do about it. */}
-                <div className="rounded-xl border border-gray-200 p-2.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-gray-500">{t('crop.confidence')}</span>
-                    <span className={`font-bold ${CONFIDENCE_STYLE[result.data_confidence]}`}>
-                      {result.data_confidence.toUpperCase()}
-                    </span>
-                  </div>
-                  <div className="h-2 rounded-full bg-gray-200 overflow-hidden mt-1.5">
-                    <div className={`h-full ${
-                      result.data_confidence === 'high' ? 'bg-green-600'
-                        : result.data_confidence === 'medium' ? 'bg-amber-500'
-                        : 'bg-red-400'}`}
-                         style={{ width: `${Math.max(6, Math.round(
-                           (result.data_used.length /
-                             Math.max(1, result.data_used.length
-                               + (result.data_missing?.length || 0))) * 100))}%` }} />
-                  </div>
-                  <p className="text-[11px] text-gray-500 mt-1.5">
-                    {result.data_used.length === 0
-                      ? t('crop.noMeasurements')
-                      : `${result.data_used.length} / ${result.data_used.length
-                          + (result.data_missing?.length || 0)} `
-                        + t('crop.measuredValues')}
-                  </p>
+                <div className="text-xs">
+                  {t('crop.confidence')}{' '}
+                  <span className={`font-bold ${CONFIDENCE_STYLE[result.data_confidence]}`}>
+                    {result.data_confidence.toUpperCase()}
+                  </span>
+                  <span className="text-gray-400">
+                    {' '}· based on {result.data_used.length} measured value(s)
+                  </span>
                 </div>
 
                 {result.provenance && (
@@ -350,8 +324,8 @@ export default function CropAdvisor() {
 
                 {result.data_missing?.length > 0 && (
                   <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg p-2">
-                    {t('crop.notMeasured')}: {result.data_missing.join(', ')}.
-                    {' '}{t('crop.addingImproves')}
+                    Not measured: {result.data_missing.join(', ')}. Adding these
+                    improves accuracy.
                   </p>
                 )}
 

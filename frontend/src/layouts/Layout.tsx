@@ -1,6 +1,6 @@
-import { ReactNode, useState } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { getUser, logout } from '../services/api'
+import { getHarvestMessageNotifications, getUser, logout } from '../services/api'
 import { LanguagePicker } from '../components/VoiceInput'
 import { FloatingAdvisor } from '../components/FloatingAdvisor'
 import { WeatherWidget } from '../components/WeatherWidget'
@@ -21,10 +21,11 @@ const FARMER_NAV = [
   { to: '/circular', key: 'nav.circular', icon: '♻️' },
   { to: '/market', key: 'nav.market', icon: '💰' },
   { to: '/sell', key: 'nav.sell', icon: '🛒' },
+  { to: '/harvest-calendar', key: 'nav.harvestCalendar', icon: '📅' },
+  { to: '/notifications', key: 'nav.notifications', icon: '🔔' },
+  { to: '/farmer-land', key: 'nav.farmerland', icon: '🏡' },
   { to: '/machinery', key: 'nav.machinery', icon: '🚜' },
-  // Weather is the always-visible chip at the top right, so a whole
-  // sidebar tab for it was redundant. The /weather route still exists for
-  // anyone who wants the full forecast page.
+  { to: '/weather', key: 'nav.weather', icon: '🌤️' },
   // The AI Advisor and the old Voice Assistant page are merged into one
   // agentic panel (chat + full app navigation with permission), reached
   // from the single floating crop icon pinned bottom-right on every page
@@ -41,7 +42,9 @@ const FARMER_NAV = [
 // their own order history, not the farmer's operational toolset.
 const BUYER_NAV = [
   { to: '/marketplace', key: 'nav.marketplace', icon: '🛒' },
-  { to: '/my-orders', key: 'nav.myorders', icon: '📦' },
+  { to: '/pre-booking', key: 'nav.prebooking', icon: '📅' },
+  { to: '/notifications', key: 'nav.notifications', icon: '🔔' },
+  { to: '/land-contractors', key: 'nav.landcontractors', icon: '🏡' },
 ]
 
 // An admin is a state/central agriculture officer, not a farmer — Farm
@@ -54,11 +57,24 @@ export function Layout({ children }: { children: ReactNode }) {
   const user = getUser()
   const nav = useNavigate()
   const [open, setOpen] = useState(false)
+  const [unreadNotifications, setUnreadNotifications] = useState(0)
   const isAdmin = user?.role === 'admin'
   const isBuyer = user?.role === 'buyer'
   const { t } = useLanguage()
   const modeKey = user?.mode === 'balcony' ? 'common.mode.balcony' : 'common.mode.farm'
   const NAV = isAdmin ? ADMIN_NAV : isBuyer ? BUYER_NAV : FARMER_NAV
+
+  useEffect(() => {
+    if (isAdmin) return
+    const loadUnreadNotifications = () => {
+      getHarvestMessageNotifications()
+        .then(items => setUnreadNotifications(items.filter((item: any) => !item.read).length))
+        .catch(() => {})
+    }
+    loadUnreadNotifications()
+    const timer = window.setInterval(loadUnreadNotifications, 10000)
+    return () => window.clearInterval(timer)
+  }, [isAdmin])
 
   return (
     <div className="min-h-screen flex bg-[#f6f8f6]">
@@ -84,7 +100,15 @@ export function Layout({ children }: { children: ReactNode }) {
                  ${isActive ? 'bg-field-700 border-l-4 border-white' : 'hover:bg-field-700/50 border-l-4 border-transparent'}`
               }
             >
-              <span>{n.icon}</span> {t(n.key)}
+              <span>{n.icon}</span>
+              <span className="flex items-center gap-2">
+                {t(n.key)}
+                {n.to === '/notifications' && unreadNotifications > 0 && (
+                  <span className="inline-flex min-w-5 h-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[11px] font-bold text-white">
+                    {unreadNotifications > 9 ? '9+' : unreadNotifications}
+                  </span>
+                )}
+              </span>
             </NavLink>
           ))}
           {isAdmin && (

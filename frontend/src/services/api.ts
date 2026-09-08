@@ -5,6 +5,39 @@ import axios from 'axios'
 // backend leaves the UI spinning forever with no way to recover.
 export const api = axios.create({ baseURL: '', timeout: 180000 })
 
+export const browseLandListings = (params: Record<string, any> = {}) =>
+  api.get('/api/land/browse', { params }).then((r) => r.data)
+export const getLandListingContact = (id: number) =>
+  api.get(`/api/land/listings/${id}/contact`).then((r) => r.data)
+export const requestLandContract = (payload: any) =>
+  api.post('/api/land/contracts', payload).then((r) => r.data)
+export const getMyLandContracts = () =>
+  api.get('/api/land/my-contracts').then((r) => r.data)
+export const cancelLandContract = (id: number) =>
+  api.post(`/api/land/contracts/${id}/cancel`).then((r) => r.data)
+export const getLandStats = () => api.get('/api/land/stats').then((r) => r.data)
+export const createLandListing = (payload: any) =>
+  api.post('/api/land/listings', payload).then((r) => r.data)
+export const getMyLandListings = () =>
+  api.get('/api/land/my-listings').then((r) => r.data)
+export const getIncomingLandContracts = () =>
+  api.get('/api/land/contracts/incoming').then((r) => r.data)
+export const respondToLandContract = (id: number, payload: { action: string; farmer_notes?: string }) =>
+  api.post(`/api/land/contracts/${id}/respond`, payload).then((r) => r.data)
+export const getContractMessages = (id: number) =>
+  api.get(`/api/land/contracts/${id}/messages`).then((r) => r.data)
+export const sendContractMessage = (id: number, content: string) =>
+  api.post(`/api/land/contracts/${id}/messages`, { content }).then((r) => r.data)
+export const getHarvestMessages = (harvestId: number) =>
+  api.get(`/api/harvest/calendar/${harvestId}/messages`).then((r) => r.data)
+export const sendHarvestMessage = (harvestId: number, content: string) =>
+  api.post(`/api/harvest/calendar/${harvestId}/messages`, { content }).then((r) => r.data)
+export const deleteHarvestMessage = (harvestId: number, messageId: number) =>
+  api.delete(`/api/harvest/calendar/${harvestId}/messages/${messageId}`).then((r) => r.data)
+export const getHarvestMessageNotifications = () => api.get('/api/notifications').then((r) => r.data)
+export const markNotificationRead = (notificationId: number) =>
+  api.patch(`/api/notifications/${notificationId}/read`).then((r) => r.data)
+
 api.interceptors.request.use((cfg) => {
   const token = localStorage.getItem('token')
   if (token) cfg.headers.Authorization = `Bearer ${token}`

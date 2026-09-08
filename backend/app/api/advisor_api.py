@@ -288,18 +288,10 @@ def save_onboarding(data: OnboardingIn,
             ph=soil_vals["ph"] or 7.0,
         ))
 
-    # Onboarded once the minimum needed for a real recommendation is present.
-    # ONE source of truth for "is setup complete".
-    #
-    # This line used to hardcode `state and land_size_acres and soil_type`
-    # while farm_profile.REQUIRED_FIELDS said something different. When those
-    # two drifted apart, `onboarded` stayed False forever — and because the
-    # route guard needs BOTH the fields and the flag, the farmer was sent back
-    # to setup on every navigation no matter how many times they completed it.
-    #
-    # Reading the constant means the two can never disagree again.
+    # Keep completion aligned with the shared profile guard. Recommended
+    # fields can remain empty while the farmer finishes setup.
     from app.services.farm_profile import REQUIRED_FIELDS
-    farm.onboarded = all(getattr(farm, f, None) for f in REQUIRED_FIELDS)
+    farm.onboarded = all(bool(getattr(farm, field, None)) for field in REQUIRED_FIELDS)
 
     db.commit()
     db.refresh(farm)

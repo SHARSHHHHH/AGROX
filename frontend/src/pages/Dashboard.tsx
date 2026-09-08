@@ -6,9 +6,6 @@ import { CurrentCropPanel } from '../components/CurrentCropPanel'
 import { useLanguage } from '../contexts/LanguageContext'
 import { usePageContext } from '../contexts/PageContext'
 
-// Simulator presets. Only shown when the farmer is actually on the seeded
-// demo device — a real account must never be told its field is in a
-// 'heavy rain' scenario that someone clicked.
 const SCENARIOS = [
   ['normal', 'Normal'], ['dry_soil', 'Dry soil'], ['heavy_rain', 'Heavy rain'],
   ['low_water', 'Low water'], ['high_temp', 'High temp'],
@@ -83,6 +80,7 @@ export default function Dashboard() {
           Namaste, {user?.name?.split(' ')[0]} 🌱
         </h1>
         
+      <CurrentCropPanel />
 <Button variant="ghost" onClick={load}>↻ Refresh</Button>
       </div>
       <p className="text-sm text-gray-500 mb-5">
@@ -117,11 +115,6 @@ export default function Dashboard() {
         <StatCard label={t('dash.watertank')} icon="🪣" value={sensor?.water_level ?? '—'} unit="%"
           status={sensor?.water_level < 20 ? 'CRITICAL' : undefined} />
       </div>
-
-      {/* Crop lifecycle sits BELOW the boxed sensor values: the
-          numbers are what a farmer scans first, and the crop card is
-          taller and reads as a section rather than a stat. */}
-      <CurrentCropPanel />
 
       {/* Irrigation + Weather + Soil summary */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

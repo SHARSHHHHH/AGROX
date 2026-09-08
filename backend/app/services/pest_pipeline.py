@@ -1,23 +1,51 @@
 """Pest pipeline orchestrator.
 
-Runs the full deterministic pipeline end to end and returns one structured,
+Runs the full hybrid pipeline end to end and returns one structured,
 frontend-friendly result:
 
-    detect_pest (LLaVA label)         [ml.pest_vision]
+    detect_pest (Gemini label, exact or semantic KB match) [ml.pest_vision]
         -> assess_severity            [services.pest_severity]
         -> build_ipm                  [services.ipm]
         -> rank_sustainable_treatment [services.ipm]
 
+    ...or, when nothing matches the curated KB closely enough:
+
+    detect_pest (type=pest_unmatched)
+        -> grounded_fallback          [ml.pest_rag_fallback]
+
 The vision model only supplies a label + rough infestation estimate; every
-downstream decision is deterministic and grounded in PEST_KB. This module is
-used by BOTH the /api/pest/analyze endpoint and the AI agent's pest tool, so
-the two can never diverge.
+downstream decision for a KB-matched pest is deterministic and grounded in
+PEST_KB (exact or semantic match — see ml/pest_vision.py). For a pest outside
+the KB, the fallback path is grounded only in the nearest KB reference
+entries and is clearly marked unverified. This module is used by BOTH the
+/api/pest/analyze endpoint and the AI agent's pest tool, so the two can never
+diverge.
+
+CACHING
+-------
+A small in-memory cache keyed by (pest identity, crop, growth_stage) skips
+re-running severity/IPM/generation for a repeat query in the same process —
+the deterministic KB path is already sub-second, but this mainly protects
+the RAG-fallback path (the one call that can take several seconds) from
+paying that cost twice for the same pest+crop combination. Not persisted
+across restarts; that's fine for a single-process demo deployment. For a
+horizontally scaled deployment, swap this dict for Redis without changing
+the call sites.
 """
 from __future__ import annotations
 
 from app.ml.pest_vision import detect_pest
+from app.ml.pest_rag_fallback import grounded_fallback
 from app.services.pest_severity import assess_severity
 from app.services.ipm import build_ipm, rank_sustainable_treatment
+
+_CACHE_MAX_ENTRIES = 500
+_result_cache: dict[tuple, dict] = {}
+
+
+def _cache_key(identity: str, crop: str, growth_stage: str) -> tuple:
+    return (identity.strip().lower(), (crop or "").strip().lower(),
+            (growth_stage or "").strip().lower())
 
 
 async def run_pest_pipeline(image_path: str, crop: str = "",
@@ -27,10 +55,16 @@ async def run_pest_pipeline(image_path: str, crop: str = "",
 
     The returned dict is the canonical schema used by the API and the agent:
       success, type, pest, crop, severity, ipm, sustainable_recommendation,
-      environmental_considerations, uncertain, message, grounded_facts.
+      environmental_considerations, uncertain, message, grounded_facts,
+      verified.
     """
     detection = await detect_pest(image_path, crop)
     dtype = detection.get("type")
+
+    # Pest outside the curated KB -> grounded, hedged fallback rather than a
+    # confident-looking guess.
+    if dtype == "pest_unmatched":
+        return await _run_fallback_path(detection, crop, growth_stage)
 
     # Non-pest outcomes short-circuit with an honest, structured response.
     if dtype != "pest":
@@ -49,6 +83,7 @@ async def run_pest_pipeline(image_path: str, crop: str = "",
             "message": detection.get("message"),
             "model_guess": detection.get("model_guess"),
             "grounded_facts": _facts_for_non_pest(detection),
+            "verified": True,
         }
 
     pest_name = detection["pest_name"]
@@ -73,7 +108,7 @@ async def run_pest_pipeline(image_path: str, crop: str = "",
     kb = detection.get("kb", {}) or {}
     grounded_facts = _facts_for_pest(pest_name, detection, severity, ipm, ranked, kb)
 
-    return {
+    result = {
         "success": True,
         "type": "pest",
         "pest": {
@@ -105,7 +140,63 @@ async def run_pest_pipeline(image_path: str, crop: str = "",
         "message": None,
         "grounded_facts": grounded_facts,
         "visible_indicators": detection.get("visible_indicators", ""),
+        "verified": True,
     }
+    if detection.get("matched_via") == "semantic":
+        result["matched_via"] = "semantic"
+        result["original_guess"] = detection.get("original_guess")
+        result["match_similarity"] = detection.get("match_similarity")
+    return result
+
+
+async def _run_fallback_path(detection: dict, crop: str, growth_stage: str) -> dict:
+    """Handle a pest that didn't match the curated KB (exact or semantic).
+    Cached by (guess, crop, growth_stage) since this is the one path with
+    real generation latency worth protecting from repeat cost."""
+    identity = detection.get("pest_name") or "unknown_pest"
+    key = _cache_key(identity, crop, growth_stage)
+    if key in _result_cache:
+        return _result_cache[key]
+
+    fallback = await grounded_fallback(
+        pest_guess=identity,
+        crop=crop,
+        visible_indicators=detection.get("visible_indicators", ""),
+        nearest=detection.get("nearest_candidates", []),
+    )
+
+    result = {
+        "success": True,
+        "type": "pest_unmatched",
+        "pest": {
+            "name": identity,
+            "scientific_name": "",
+            "confidence": detection.get("confidence", 0.0),
+            "affected_crops": [],
+            "symptoms": "",
+            "visual_indicators": detection.get("visible_indicators", ""),
+            "favorable_conditions": "",
+        },
+        "crop": crop,
+        "severity": {"level": "UNKNOWN", "is_estimate": True,
+                     "reason": "Pest not in the verified database; severity cannot be "
+                               "estimated without a confirmed identification.",
+                     "factors": []},
+        "ipm": _empty_ipm(),
+        "sustainable_recommendation": fallback["summary"],
+        "environmental_considerations": [],
+        "uncertain": True,
+        "message": fallback["summary"],
+        "grounded_facts": fallback["grounded_facts"],
+        "visible_indicators": detection.get("visible_indicators", ""),
+        "verified": False,
+        "origin": fallback.get("origin", "ai_fallback"),
+    }
+
+    if len(_result_cache) >= _CACHE_MAX_ENTRIES:
+        _result_cache.pop(next(iter(_result_cache)))
+    _result_cache[key] = result
+    return result
 
 
 def _empty_ipm() -> dict:

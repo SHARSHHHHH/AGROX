@@ -227,5 +227,14 @@ PEST_KB = {
     },
 }
 
+# Merge in the extended KB (more Indian crops + indigenous millet varieties —
+# see pest_kb_extended.py). Kept as a separate source file so the original,
+# demo-verified core set above stays easy to find, while every downstream
+# consumer (severity engine, IPM engine, API, semantic match) sees one
+# combined PEST_KB and needs no changes.
+from app.ml.pest_kb_extended import PEST_KB_EXTENDED  # noqa: E402
+
+PEST_KB.update(PEST_KB_EXTENDED)
+
 # Pests the detector is allowed to name (kept in sync with the KB automatically).
 KNOWN_PESTS = list(PEST_KB.keys())

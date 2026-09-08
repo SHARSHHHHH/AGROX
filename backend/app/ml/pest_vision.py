@@ -1,23 +1,39 @@
-"""Pest detection via Google Gemini Vision.
+"""Pest detection via Google Gemini Vision — now hybrid.
 
-The vision model only picks a label and confidence; all pest facts are
-grounded in PEST_KB.
-  - the vision model only picks a LABEL and a self-reported confidence
-  - all pest facts come from PEST_KB, never from the model
+The vision model only picks a label (or, when nothing on the known list
+fits, a free-text description) and confidence; all pest facts still come
+from PEST_KB, never from the model.
+
+Hybrid matching, in order:
+  1. Exact match against PEST_KB (fast path, the original behaviour).
+  2. Semantic match — embed the model's free-text guess and compare against
+     PEST_KB entries by meaning (pest_embeddings.semantic_match_pest). Lets
+     a locally-worded or slightly different-sounding pest still resolve to
+     the correct verified KB entry instead of getting force-fit into the
+     nearest LISTED name or dismissed as unknown.
+  3. RAG fallback — if nothing matches closely enough, hand back the
+     nearest reference entries for pest_pipeline to run through
+     pest_rag_fallback.grounded_fallback(), which hedges instead of
+     guessing.
+
+  - the vision model never fabricates a disease diagnosis; it just reports
+    the model's disease/pest determination and, if a pest, either grounds
+    the details in PEST_KB directly or triggers the fallback path.
   - low confidence -> explicit "Unknown / Low confidence", never a guess
     dressed up as certainty
-
-This module also lets the model say the problem looks like a DISEASE rather
-than a pest, so the combined image workflow can hand back to disease handling
-instead of forcing a pest label. It never fabricates a disease diagnosis here;
-it just reports the model's disease/pest determination and, if a pest, grounds
-the details in PEST_KB.
 """
 from __future__ import annotations
+
+import json
+import logging
+import re
 
 from PIL import Image
 from app.core.config import settings
 from app.ml.pest_knowledge import PEST_KB, KNOWN_PESTS
+from app.ml.pest_embeddings import semantic_match_pest, nearest_kb_entries
+
+log = logging.getLogger("agri.pest_vision")
 
 # Reuse the same confidence bar as disease detection for consistency.
 CONFIDENCE_THRESHOLD = 0.55
@@ -40,7 +56,7 @@ async def detect_pest(path: str, crop: str = "") -> dict:
 
     Result shape (never raises for model issues — degrades honestly):
       {
-        "type": "pest" | "disease" | "healthy" | "uncertain",
+        "type": "pest" | "pest_unmatched" | "disease" | "healthy" | "uncertain",
         "pest_name": str | None,
         "crop": str,
         "confidence": float,
@@ -48,8 +64,10 @@ async def detect_pest(path: str, crop: str = "") -> dict:
         "affected_leaf_pct": float | None,
         "kb": <PEST_KB entry> | None,
         "uncertain": bool,
-        "message": str | None,       # present when uncertain
-        "model_guess": str | None,   # low-confidence guess, if any
+        "message": str | None,        # present when uncertain
+        "model_guess": str | None,    # low-confidence guess, if any
+        "matched_via": "exact" | "semantic" | None,
+        "nearest_candidates": [(name, score), ...],   # only for pest_unmatched
       }
     """
     if not validate_image(path):
@@ -57,10 +75,13 @@ async def detect_pest(path: str, crop: str = "") -> dict:
                           "Please upload a clear photo of the affected leaves or the insect.")
 
     try:
-        return await _gemini_pest(path, crop)
+        data = await _gemini_pest(path, crop)
     except Exception as e:
+        log.error("Pest vision call failed (%s): %s", type(e).__name__, e)
         return _uncertain(f"Vision model is unavailable right now ({type(e).__name__}). "
                           "Please try again shortly or consult an agricultural expert.")
+
+    return await _resolve_pest(data, crop)
 
 
 def _pest_prompt(crop: str) -> str:
@@ -68,18 +89,25 @@ def _pest_prompt(crop: str) -> str:
     return (
         f"You are an agricultural entomologist. Examine this {crop or 'crop'} image "
         f"for INSECT PESTS. First decide whether the main problem is a pest, a "
-        f"disease, or a healthy plant. If it is a pest, choose the MOST likely one "
-        f"strictly from this list: [{pest_list}]. "
+        f"disease, or a healthy plant. If it is a pest, check whether it matches one "
+        f"of these known pests: [{pest_list}]. If it clearly matches one, use that "
+        f"exact name. If it looks like a real pest but does NOT match any of these "
+        f"well, set pest_name to \"other\" and instead describe it precisely in "
+        f"pest_description (what it looks like, the damage pattern, which insect "
+        f"family it resembles) — do not force-fit it to the closest listed name. "
         f"Also estimate how much of the visible foliage is affected. "
         f"Respond ONLY as JSON with these keys: "
         f'{{"type": "pest|disease|healthy", '
-        f'"pest_name": "<one from the list, or empty if not a pest>", '
+        f'"pest_name": "<exact name from the list, \\"other\\", or empty if not a pest>", '
+        f'"pest_description": "<only when pest_name is \\"other\\": a precise free-text '
+        f'description>", '
         f'"confidence": <0.0-1.0>, '
         f'"visible_infestation": "none|low|moderate|high", '
         f'"affected_leaf_pct": <integer 0-100>, '
         f'"visible_indicators": "<short description of what you see>"}}. '
         f"Be honest about confidence; if you are unsure, use a low number. Do not "
-        f"guess a specific pest you cannot actually see."
+        f"guess a specific pest you cannot actually see, and do not force an "
+        f"unfamiliar pest into the known list just because it's the closest name."
     )
 
 
@@ -87,13 +115,16 @@ async def _gemini_pest(path: str, crop: str) -> dict:
     """Pest detection via Google Gemini Vision."""
     from app.ml.gemini_vision import gemini_vision_json
     data = await gemini_vision_json(path, _pest_prompt(crop))
-    return _interpret_pest(data, crop)
+    return data
 
 
-def _interpret_pest(data: dict, crop: str) -> dict:
-    """Interpret Gemini output and ground facts in PEST_KB."""
+async def _resolve_pest(data: dict, crop: str) -> dict:
+    """Interpret Gemini output, resolve the pest name against the KB (exact
+    then semantic), and ground facts in PEST_KB — or route to the RAG
+    fallback when nothing matches closely enough."""
     kind = str(data.get("type", "")).lower()
     pest_name = (data.get("pest_name") or "").strip()
+    pest_description = (data.get("pest_description") or "").strip()
     conf = float(data.get("confidence", 0) or 0)
     infest = str(data.get("visible_infestation", "unknown")).lower()
     pct = data.get("affected_leaf_pct")
@@ -125,24 +156,49 @@ def _interpret_pest(data: dict, crop: str) -> dict:
             "visible_indicators": indicators,
         }
 
-    # Pest path — require confidence AND a known pest, else be honest.
-    if conf < CONFIDENCE_THRESHOLD or pest_name not in PEST_KB:
+    # Not confident, or no pest claim at all -> honest uncertainty.
+    if conf < CONFIDENCE_THRESHOLD or (not pest_name):
         return _uncertain(
             "I couldn't confidently identify the pest from this image. Please upload "
             "a clearer image showing the affected leaves or the insect close-up.",
             partial={"pest_name": pest_name or None, "confidence": round(conf, 2)})
 
+    # 1) Exact match — the original fast path.
+    if pest_name in PEST_KB:
+        return {
+            "type": "pest", "pest_name": pest_name, "crop": crop,
+            "confidence": round(conf, 2),
+            "visible_infestation": infest if infest in ("none", "low", "moderate", "high") else "unknown",
+            "affected_leaf_pct": pct, "kb": PEST_KB[pest_name], "uncertain": False,
+            "message": None, "visible_indicators": indicators, "matched_via": "exact",
+        }
+
+    # 2) "other" or an unlisted name -> try semantic match against the KB by
+    #    meaning before giving up.
+    query_name = pest_description or pest_name
+    matched_name, score = await semantic_match_pest(pest_name, pest_description)
+    if matched_name:
+        return {
+            "type": "pest", "pest_name": matched_name, "crop": crop,
+            "confidence": round(conf, 2),
+            "visible_infestation": infest if infest in ("none", "low", "moderate", "high") else "unknown",
+            "affected_leaf_pct": pct, "kb": PEST_KB[matched_name], "uncertain": False,
+            "message": None, "visible_indicators": indicators,
+            "matched_via": "semantic", "original_guess": query_name,
+            "match_similarity": round(score, 3),
+        }
+
+    # 3) Nothing in the KB is close enough -> RAG fallback territory. Hand
+    #    back the nearest reference entries so the pipeline doesn't need a
+    #    second embedding round-trip.
+    nearest = await nearest_kb_entries(pest_name, pest_description, k=3)
     return {
-        "type": "pest",
-        "pest_name": pest_name,
-        "crop": crop,
+        "type": "pest_unmatched", "pest_name": query_name, "crop": crop,
         "confidence": round(conf, 2),
         "visible_infestation": infest if infest in ("none", "low", "moderate", "high") else "unknown",
-        "affected_leaf_pct": pct,
-        "kb": PEST_KB[pest_name],
-        "uncertain": False,
-        "message": None,
-        "visible_indicators": indicators,
+        "affected_leaf_pct": pct, "kb": None, "uncertain": False,
+        "message": None, "visible_indicators": indicators,
+        "nearest_candidates": nearest,
     }
 
 

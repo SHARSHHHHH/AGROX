@@ -31,7 +31,7 @@ from typing import Any, Dict, List
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.models import Alert, PushSubscription
+from app.models.models import Alert, HarvestMessage, Notification, PushSubscription
 
 log = logging.getLogger("agri.notifications")
 
@@ -41,6 +41,23 @@ PRIORITY_RANK = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 # when a user clears site data, and retrying a dead endpoint forever wastes
 # time on every alert run.
 MAX_FAILURES = 5
+
+
+def create_message_notifications(db: Session, message: HarvestMessage,
+                                 recipient_ids: List[int]) -> None:
+    """Create one in-app notification per recipient for a new message."""
+    for recipient_id in set(recipient_ids):
+        if recipient_id == message.sender_id:
+            continue
+        db.add(Notification(
+            recipient_id=recipient_id,
+            notification_type="harvest_message",
+            title="New harvest message",
+            message=message.content,
+            source_message_id=message.id,
+            harvest_id=message.harvest_id,
+            url=f"/harvest-calendar?harvest={message.harvest_id}",
+        ))
 
 
 def push_available() -> tuple[bool, str]:

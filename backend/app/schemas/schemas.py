@@ -159,3 +159,59 @@ class ProduceOrderIn(BaseModel):
 
 class OrderRespondIn(BaseModel):
     status: str   # confirmed | declined | completed
+
+
+class HarvestCalendarIn(BaseModel):
+    crop: str
+    variety: str = ""
+    sowing_date: Optional[str] = None
+    expected_harvest_date: str
+    estimated_quantity_kg: Optional[float] = None
+    expected_min_price: Optional[float] = None
+    expected_max_price: Optional[float] = None
+    plot_size_acres: float = 1.0
+    soil_type: str = ""
+    irrigation_type: str = ""
+    notes: str = ""
+
+
+class HarvestCalendarOut(HarvestCalendarIn):
+    id: int
+    farm_id: int
+    farmer_id: int
+    status: str
+    created_at: str
+    updated_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class PreBookingIn(BaseModel):
+    quantity_kg: Optional[float] = None
+    agreed_price_per_kg: Optional[float] = None
+    delivery_date: Optional[str] = None
+    delivery_location: str = ""
+    buyer_message: str = ""
+
+
+class PreBookingOut(PreBookingIn):
+    id: int
+    harvest_id: int
+    buyer_id: int
+    status: str
+    farmer_response: str = ""
+    created_at: str
+    updated_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class PreBookingRespondIn(BaseModel):
+    status: str
+    farmer_response: str = ""
+
+
+class HarvestMessageIn(BaseModel):
+    content: str

@@ -8,7 +8,8 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from app.models.models import (User, Farm, SensorReading, SoilTest, Scheme,
                                PlantDiagnosis, MachineryListing, PestObservation,
-                               CropListing, SchemeInterest, Expense)
+                               CropListing, SchemeInterest, Expense,
+                               LandListing, LandContract)
 from app.core.security import hash_password
 from app.services import simulator
 
@@ -116,28 +117,16 @@ def seed(db: Session):
     db.add(buyer)
     db.commit(); db.refresh(farmer); db.refresh(grower); db.refresh(admin); db.refresh(buyer)
 
-    # The demo farms carry a sowing date and a sown area, because without them
-    # the lifecycle engine cannot compute days-after-sowing or a harvest date,
-    # and every screen that reads the current crop shows blanks. Dates are
-    # relative to today so the demo does not go stale.
     db.add(Farm(user_id=farmer.id, mode="farm", name="Ravi's Farm",
                 state="Tamil Nadu", district="Coimbatore", village="Sulur",
                 area="2 acres", crop="tomato", variety="Local", growth_stage="flowering",
                 soil_type="loamy", irrigation_type="drip", farming_method="conventional",
-                device_id="ESP32-001", farmer_category="small", land_size_acres=2.0,
-                crop_area_acres=1.5,
-                sowing_date=datetime.utcnow() - timedelta(days=55),
-                previous_crop="chickpea", previous_season="rabi",
-                water_source="borewell", water_availability="limited",
-                area_unit="acre", onboarded=True))
+                device_id="ESP32-001", farmer_category="small", land_size_acres=2.0))
     db.add(Farm(user_id=grower.id, mode="balcony", name="Anita's Balcony",
                 location="Bengaluru", crop="chilli", area="12 inch pot",
                 growth_stage="vegetative", sunlight="6 hours", growing_medium="potting mix",
                 watering_method="manual", device_id="ESP32-002",
-                farmer_category="marginal", land_size_acres=0.1,
-                crop_area_acres=0.1,
-                sowing_date=datetime.utcnow() - timedelta(days=30),
-                onboarded=True))
+                farmer_category="marginal", land_size_acres=0.1))
 
     # Soil tests (for fertility dashboard)
     db.add(SoilTest(user_id=farmer.id, nitrogen=35, phosphorus=18, potassium=90,
@@ -217,7 +206,7 @@ def seed(db: Session):
     db.commit()
     seed_machinery(db, farmer.id)
     seed_vendor_listings(db)
-    seed_biogas_technicians(db)
+    seed_land_listings(db)
     print("✅ Seeded: admin@agri.gov/admin123, farmer@demo.com/demo123, "
           "balcony@demo.com/demo123, buyer@demo.com/demo123")
 
@@ -370,48 +359,66 @@ def seed_vendor_listings(db: Session):
     print(f"Seeded {total} demo vendor produce listings across {len(VENDOR_PROFILES)} states")
 
 
-def seed_biogas_technicians(db: Session):
-    """Sample verified biogas installers.
+DEMO_LAND = [
+    ("Tamil Nadu", "Coimbatore", "Thondamuthur", 5.0, "Red", "Borewell", True, ["Tomato", "Onion"], 12000, "9876543210", 11.0, 76.9),
+    ("Karnataka", "Mysuru", "Nanjangud", 12.5, "Black", "Canal", True, ["Cotton"], 15000, "9900000002", 12.3, 76.6),
+    ("Maharashtra", "Nashik", "Niphad", 3.0, "Loamy", "Rainfed", False, ["Onion", "Grapes"], 18000, "9900000003", 20.0, 74.1),
+    ("Punjab", "Ludhiana", "Jagraon", 8.0, "Alluvial", "Canal", True, ["Wheat", "Rice"], 14000, "9900000004", 30.7, 75.4),
+]
 
-    Marked verified because they are seed rows for the demo. Real entries are
-    admin-added and must be checked first — digester construction and gas
-    piping are safety-critical, and sending a farmer to an unvetted contractor
-    for pressure work is not a small thing.
-    """
-    from app.models.models import BiogasTechnician
-
-    if db.query(BiogasTechnician).count():
+def seed_land_listings(db: Session):
+    """Seed demo land listings for the new Land Contractors feature."""
+    if db.query(LandListing).count() > 0:
         return
 
-    rows = [
-        dict(name="Ramesh Patidar", organisation="Indore Biogas Services",
-             phone="9425011234", state="Madhya Pradesh", district="Indore",
-             village="Depalpur",
-             services=["survey", "construction", "installation", "subsidy_help"],
-             plant_types=["Deenbandhu", "KVIC"], size_range_m3="1-10",
-             years_experience=12,
-             notes="Handles the MNRE subsidy paperwork as well."),
-        dict(name="Sunil Verma", organisation="Gramin Urja Kendra",
-             phone="9826055678", state="Madhya Pradesh", district="Indore",
-             village="Sanwer",
-             services=["installation", "repair", "training"],
-             plant_types=["Deenbandhu", "prefab"], size_range_m3="2-25",
-             years_experience=8,
-             notes="Also services and repairs older plants."),
-        dict(name="Anita Chouhan", organisation="KVK Ujjain",
-             phone="9407099876", state="Madhya Pradesh", district="Ujjain",
-             services=["survey", "training", "subsidy_help"],
-             plant_types=["Deenbandhu"], size_range_m3="1-6",
-             years_experience=15,
-             notes="Krishi Vigyan Kendra — free site survey and guidance."),
-        dict(name="M. Karthikeyan", organisation="TN Bioenergy Works",
-             phone="9840012345", state="Tamil Nadu", district="Chennai",
-             village="Ponneri",
-             services=["survey", "construction", "installation"],
-             plant_types=["prefab", "Deenbandhu"], size_range_m3="1-15",
-             years_experience=10,
-             notes="Prefabricated plants, quicker to install."),
-    ]
-    for r in rows:
-        db.add(BiogasTechnician(verified=True, active=True, **r))
+    farmer = db.query(User).filter(User.role == "farmer").first()
+    buyer = db.query(User).filter(User.role == "buyer").first()
+    if not farmer:
+        return
+
+    count = 0
+    for state, district, village, acreage, soil, water, irr, crops, price, phone, lat, lon in DEMO_LAND:
+        listing = LandListing(
+            farmer_id=farmer.id,
+            state=state,
+            district=district,
+            village=village,
+            area_acres=acreage,
+            soil_type=soil,
+            water_source=water,
+            irrigation_available=irr,
+            suitable_crops=crops,
+            price_per_acre_per_season=price,
+            contact_phone=phone,
+            latitude=lat,
+            longitude=lon,
+            status="available"
+        )
+        db.add(listing)
+        count += 1
     db.commit()
+
+    # Create one dummy contract for the buyer to see
+    if count > 0 and buyer:
+        first_listing = db.query(LandListing).first()
+        if first_listing:
+            first_listing.status = "rented"
+            contract = LandContract(
+                listing_id=first_listing.id,
+                buyer_id=buyer.id,
+                farmer_id=first_listing.farmer_id,
+                start_date=datetime.utcnow(),
+                end_date=datetime.utcnow() + timedelta(days=180),
+                agreed_crop=first_listing.suitable_crops[0] if first_listing.suitable_crops else "Unknown",
+                price_per_acre=first_listing.price_per_acre_per_season,
+                total_price=first_listing.price_per_acre_per_season * first_listing.area_acres * 2, # Assuming 2 seasons
+                status="active",
+                terms_accepted=True,
+                buyer_notes="Buyer gets all produce grown during this period."
+            )
+            db.add(contract)
+            db.commit()
+
+    print(f"Seeded {count} demo land listings and 1 contract.")
+
+
