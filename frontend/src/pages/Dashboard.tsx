@@ -79,9 +79,7 @@ export default function Dashboard() {
         <h1 className="text-2xl font-bold text-field-800">
           Namaste, {user?.name?.split(' ')[0]} 🌱
         </h1>
-        
-      <CurrentCropPanel />
-<Button variant="ghost" onClick={load}>↻ Refresh</Button>
+        <Button variant="ghost" onClick={load}>↻ Refresh</Button>
       </div>
       <p className="text-sm text-gray-500 mb-5">
         Here's the current status of your {isBalcony ? 'garden' : 'farm'}.
@@ -117,7 +115,7 @@ export default function Dashboard() {
       </div>
 
       {/* Irrigation + Weather + Soil summary */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <Card>
           <div className="flex items-center justify-between mb-2">
             <h3 className="font-semibold text-field-800">💧 Irrigation</h3>
@@ -165,6 +163,16 @@ export default function Dashboard() {
             </div>
           ) : <p className="text-sm text-gray-400">{t('dash.nosoil')}</p>}
         </Card>
+      </div>
+
+      {/* Crop status & recommendations — sits below the live sensor
+          readings, since "what's happening right now" outranks "what to
+          grow next" on a dashboard someone checks between jobs. */}
+      <h2 className="text-lg font-bold text-field-800 mb-3">
+        🌾 Crop status &amp; next steps
+      </h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <CurrentCropPanel />
       </div>
     </div>
   )
