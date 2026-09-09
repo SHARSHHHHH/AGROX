@@ -399,8 +399,23 @@ export default function CircularFarming() {
               <input type="number" value={dungOverride}
                      onChange={(e) => setDungOverride(e.target.value)}
                      className="border rounded-lg px-2 py-1.5 text-sm w-28" />
-              <Button onClick={() => setEditingDung(false)}>
-                {t('cf.reserveBtn')}
+              <Button onClick={async () => {
+                if (dungOverride && Number(dungOverride) > 0) {
+                  setBusy(true)
+                  try {
+                    await allocateDigestate(Number(dungOverride))
+                    await load()
+                    setEditingDung(false)
+                  } catch {
+                    setErr(t('cf.saveFailed'))
+                  } finally {
+                    setBusy(false)
+                  }
+                } else {
+                  setEditingDung(false)
+                }
+              }}>
+                {busy ? t('cf.saving') : t('cf.reserveBtn')}
               </Button>
             </div>
           )}
@@ -482,6 +497,25 @@ export default function CircularFarming() {
               ))}
             </div>
           )}
+        </Card>
+      )}
+
+      {/* ---------- BIOGAS: switch to manure ---------- */}
+      {mode === 'biogas' && (
+        <Card>
+          <div className="rounded-xl border-2 border-field-300 bg-field-50 p-3">
+            <p className="text-[10px] font-bold text-field-700 uppercase">
+              {t('cf.alsoMakeManure')}
+            </p>
+            <p className="text-sm text-gray-700 mt-1">
+              {t('cf.biogasDigestate')}
+            </p>
+            <div className="mt-2">
+              <Button onClick={() => choose('manure')}>
+                ♻️ {t('cf.optManure')}
+              </Button>
+            </div>
+          </div>
         </Card>
       )}
 

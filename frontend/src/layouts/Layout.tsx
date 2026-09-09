@@ -13,7 +13,6 @@ const FARMER_NAV = [
   // so there's a single /farm route now. /onboarding redirects here to
   // keep any old bookmark or link working.
   { to: '/farm', key: 'nav.farm', icon: '🌱' },
-  { to: '/soil', key: 'nav.soil', icon: '🧪' },
   { to: '/water', key: 'nav.water', icon: '💧' },
   { to: '/plant-health', key: 'nav.plant', icon: '🍃' },
   { to: '/crop-advisor', key: 'nav.crop', icon: '🌾' },
@@ -48,7 +47,7 @@ const BUYER_NAV = [
 ]
 
 // An admin is a state/central agriculture officer, not a farmer — Farm
-// Setup, Soil, Water, Weather and the rest of the day-to-day farming tools
+// Setup, Water, Weather and the rest of the day-to-day farming tools
 // have no place in their view. Their entire job is the analytics dashboard,
 // which they reach through the amber "Govt Dashboard" link below.
 const ADMIN_NAV: typeof FARMER_NAV = []
