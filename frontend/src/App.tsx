@@ -28,6 +28,8 @@ import FarmerLand from './pages/FarmerLand'
 import HarvestCalendar from './pages/HarvestCalendar'
 import PreBooking from './pages/PreBooking'
 import Notifications from './pages/Notifications'
+import GovernmentBrief from './pages/GovernmentBrief'
+import PestOutbreakReport from './pages/PestOutbreakReport'
 
 function Protected({ children }: { children: JSX.Element }) {
   return getUser() ? <Layout>{children}</Layout> : <Navigate to="/login" />
@@ -109,6 +111,8 @@ export default function App() {
       <Route path="/land-contractors" element={<Protected><LandContractors /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
       <Route path="/admin" element={<Protected><Admin /></Protected>} />
+      <Route path="/admin/brief" element={<Protected><GovernmentBrief /></Protected>} />
+      <Route path="/admin/pest-report" element={<Protected><PestOutbreakReport /></Protected>} />
       <Route path="/" element={<Navigate to={landingFor(user)} />} />
       <Route path="*" element={<Navigate to={landingFor(user)} />} />
       </Routes>

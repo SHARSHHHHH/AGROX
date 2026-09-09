@@ -23,3 +23,4 @@ earthengine-api==1.1.2
 gTTS==2.5.4
 # Browser push notifications. Optional: alerts stay in-app if absent.
 pywebpush==2.0.0
+tzdata==2024.2

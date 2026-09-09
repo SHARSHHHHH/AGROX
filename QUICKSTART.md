@@ -10,6 +10,13 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
+The main `requirements.txt` installs the complete API dependency set. For
+optional local Qwen text generation or Hugging Face vision, also run:
+
+```powershell
+pip install -r requirements-qwen.txt
+```
+
 Open `backend/.env` and replace `PASTE_YOUR_GEMINI_API_KEY_HERE` with your Google AI Studio API key.
 
 Start FastAPI:
@@ -34,7 +41,9 @@ Open the URL printed by Vite, normally http://localhost:5173.
 
 ## 3. AI setup
 
-This version uses **Google Gemini for all LLM and plant-image AI features**. Ollama is not required.
+The default configuration uses the configured cloud providers. Local Qwen and
+Hugging Face vision are optional extras from `requirements-qwen.txt`; Ollama is
+not required.
 
 Default model: `gemini-3.7-flash`.
 

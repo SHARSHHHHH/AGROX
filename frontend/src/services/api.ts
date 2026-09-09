@@ -38,6 +38,15 @@ export const getHarvestMessageNotifications = () => api.get('/api/notifications'
 export const markNotificationRead = (notificationId: number) =>
   api.patch(`/api/notifications/${notificationId}/read`).then((r) => r.data)
 
+export const getFundingOverview = (state = 'India') =>
+  api.get('/api/admin/funding/overview', { params: { state } }).then((r) => r.data)
+export const getSchemeBudgetList = (financial_year?: string) =>
+  api.get('/api/admin/funding/schemes', { params: { financial_year } }).then((r) => r.data)
+export const getDistrictFunding = (state = 'Madhya Pradesh', financial_year?: string) =>
+  api.get('/api/admin/funding/districts', { params: { state, financial_year } }).then((r) => r.data)
+export const getReportBrief = (state = 'Madhya Pradesh', financial_year?: string) =>
+  api.get('/api/admin/funding/overview', { params: { state, financial_year } }).then((r) => r.data)
+
 api.interceptors.request.use((cfg) => {
   const token = localStorage.getItem('token')
   if (token) cfg.headers.Authorization = `Bearer ${token}`

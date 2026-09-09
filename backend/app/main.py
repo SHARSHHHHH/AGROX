@@ -32,6 +32,7 @@ from app.api.tts import tts_router
 from app.api.land_contracts import router as land_router
 from app.api.harvest import router as harvest_router
 from app.api.notifications import router as notifications_router
+from app.api.government_funding import funding_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -224,7 +225,7 @@ for r in (auth_router, farm_router, iot_router, soil_router, weather_router,
           location_router, machinery_router, marketplace_router,
           satellite_router, admin_satellite_router, tts_router,
           profile_router, advisory_router, circular_router, land_router, harvest_router,
-          notifications_router):
+          notifications_router, funding_router):
     app.include_router(r)
 
 # Serve uploaded images

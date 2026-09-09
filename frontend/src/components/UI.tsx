@@ -68,6 +68,10 @@ export function Empty({ msg }: { msg: string }) {
   return <p className="text-center text-gray-400 py-8">{msg}</p>
 }
 
+export function DataSourceBadge({ status = 'DEMO' }: { status?: string }) {
+  return <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-semibold text-gray-600">{status}</span>
+}
+
 export function Button({
   children, onClick, variant = 'primary', disabled, type = 'button', className = '',
 }: {

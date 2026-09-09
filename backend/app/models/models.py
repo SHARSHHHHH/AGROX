@@ -307,6 +307,55 @@ class Notification(Base):
                              foreign_keys=[recipient_id])
 
 
+class SchemeBudget(Base):
+    __tablename__ = "scheme_budgets"
+    id = Column(Integer, primary_key=True, index=True)
+    scheme_id = Column(Integer, ForeignKey("schemes.id"), index=True)
+    financial_year = Column(String, index=True)
+    budget_estimate_cr = Column(Float, nullable=True)
+    funds_released_cr = Column(Float, nullable=True)
+    funds_utilized_cr = Column(Float, nullable=True)
+    beneficiaries_target = Column(Float, nullable=True)
+    beneficiaries_actual = Column(Float, nullable=True)
+    source = Column(String, default="")
+    source_url = Column(String, default="")
+    data_status = Column(String, default="DEMO")
+    last_updated = Column(String, default="")
+
+
+class StateFunding(Base):
+    __tablename__ = "state_funding"
+    id = Column(Integer, primary_key=True, index=True)
+    scheme_id = Column(Integer, ForeignKey("schemes.id"), nullable=True, index=True)
+    state = Column(String, index=True)
+    financial_year = Column(String, index=True)
+    allocated_cr = Column(Float, default=0)
+    released_cr = Column(Float, nullable=True)
+    utilized_cr = Column(Float, nullable=True)
+    beneficiaries = Column(Float, nullable=True)
+    source = Column(String, default="")
+    source_url = Column(String, default="")
+    data_status = Column(String, default="DEMO")
+    last_updated = Column(String, default="")
+
+
+class DistrictFunding(Base):
+    __tablename__ = "district_funding"
+    id = Column(Integer, primary_key=True, index=True)
+    scheme_id = Column(Integer, ForeignKey("schemes.id"), nullable=True, index=True)
+    state = Column(String, index=True)
+    district = Column(String, index=True)
+    financial_year = Column(String, index=True)
+    allocated_cr = Column(Float, default=0)
+    released_cr = Column(Float, nullable=True)
+    utilized_cr = Column(Float, nullable=True)
+    beneficiaries = Column(Float, nullable=True)
+    source = Column(String, default="")
+    source_url = Column(String, default="")
+    data_status = Column(String, default="DEMO")
+    last_updated = Column(String, default="")
+
+
 class MachineryListing(Base):
     """A machine one farmer is offering to rent out to others.
 
