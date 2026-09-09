@@ -310,22 +310,15 @@ export default function CropAdvisor() {
                     <p className="font-semibold text-gray-600 mb-1">
                       {t('adv.provenance')}
                     </p>
-                    {Object.entries(result.provenance).map(([k, v]) => {
-                      // Get the actual measured value from form or result
-                      const fieldValue = form[k as keyof typeof form] || ''
-                      const displayValue = String(v) === 'MANUAL' && fieldValue
-                        ? `${fieldValue} (${t('src.' + v)})`
-                        : t('src.' + v)
-                      return (
-                        <div key={k} className="flex justify-between">
-                          <span className="text-gray-500 capitalize">{k}</span>
-                          <span className={String(v) === 'MISSING'
-                            ? 'text-gray-400' : 'text-green-700 font-medium'}>
-                            {displayValue}
-                          </span>
-                        </div>
-                      )
-                    })}
+                    {Object.entries(result.provenance).map(([k, v]) => (
+                      <div key={k} className="flex justify-between">
+                        <span className="text-gray-500 capitalize">{k}</span>
+                        <span className={String(v) === 'MISSING'
+                          ? 'text-gray-400' : 'text-green-700 font-medium'}>
+                          {t('src.' + v)}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 )}
 

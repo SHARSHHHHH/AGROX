@@ -4,6 +4,7 @@ import { Layout, Settings } from './layouts/Layout'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
+import Soil from './pages/Soil'
 import Water from './pages/Water'
 import PlantAndPestHealth from './pages/PlantAndPestHealth'
 import CropAdvisor from './pages/CropAdvisor'
@@ -79,6 +80,7 @@ export default function App() {
       <Route path="/farm" element={<Protected><Onboarding /></Protected>} />
       <Route path="/onboarding" element={<Navigate to="/farm" />} />
       <Route path="/farm-setup" element={<Navigate to="/farm" />} />
+      <Route path="/soil" element={<Personalized><Soil /></Personalized>} />
       <Route path="/water" element={<Personalized><Water /></Personalized>} />
       <Route path="/plant-health" element={<Personalized><PlantAndPestHealth /></Personalized>} />
       {/* Pest Management is now a tab inside PlantAndPestHealth; the old

@@ -21,6 +21,7 @@ import { Lang } from '../i18n/translations'
 export const INTENT_ROUTES: Record<string, string> = {
   irrigation: '/water',
   weather: '/weather',
+  soil: '/soil',
   disease: '/plant-health',
   pest_management: '/pest-management',
   scheme: '/schemes',
@@ -30,6 +31,7 @@ export const INTENT_ROUTES: Record<string, string> = {
 const INTENT_NAV_KEYS: Record<string, string> = {
   irrigation: 'nav.water',
   weather: 'nav.weather',
+  soil: 'nav.soil',
   disease: 'nav.plant',
   pest_management: 'nav.pest',
   scheme: 'nav.schemes',
@@ -67,6 +69,10 @@ const PAGE_COMMANDS: PageCommand[] = [
     en: ['my farm', 'farm profile', 'my garden', 'farm setup', 'set up my farm'],
     hi: ['मेरा खेत', 'खेत प्रोफाइल', 'मेरा बगीचा', 'खेत सेटअप', 'खेत सेट अप'],
     ta: ['என் பண்ணை', 'பண்ணை விவரம்', 'என் தோட்டம்', 'பண்ணை அமைப்பு'] } },
+  { route: '/soil', navKey: 'nav.soil', keywords: {
+    en: ['soil health', 'soil page', 'soil test'],
+    hi: ['मिट्टी स्वास्थ्य', 'मिट्टी पेज', 'मिट्टी जांच'],
+    ta: ['மண் ஆரோக்கியம்', 'மண் பரிசோதனை', 'மண் பக்கம்'] } },
   { route: '/water', navKey: 'nav.water', keywords: {
     en: ['irrigation page', 'water page', 'watering'],
     hi: ['सिंचाई पेज', 'पानी पेज'],
