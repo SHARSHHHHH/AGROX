@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { getOnboardingStatus, saveOnboarding, reverseGeocode, getUser } from '../services/api'
 import { useLanguage } from '../contexts/LanguageContext'
 import { usePageContext } from '../contexts/PageContext'
+import { useFarmSetup } from '../components/FarmSetupGuard'
 import { VoiceField } from '../components/VoiceInput'
 import { Card, Button, Spinner } from '../components/UI'
 
@@ -29,9 +30,28 @@ import { Card, Button, Spinner } from '../components/UI'
  *   questions for "farm" mode, container/sunlight/growing-medium questions
  *   for "balcony" (home garden) mode — the two very different farmer
  *   profiles the old separate pages used to split across.
- * - The NPK values entered in Step 5 are also what pre-fills the Crop
- *   Advisor's soil fields, so a farmer who has done this wizard never has to
- *   retype their soil test there.
+ * - There is deliberately no "enter your soil test" step. Almost nobody
+ *   running this wizard owns an NPK sensor or lab kit, so a required field
+ *   for it would either block them forever or invite a guessed number —
+ *   and a guessed N/P/K is worse than none, per the no-invented-data rule
+ *   above. A real lab or Soil Health Card result can still be logged any
+ *   time from the Soil page; it just isn't asked for here. The crop
+ *   suitability scorer (see crop_suitability.py) already treats a missing
+ *   NPK/pH reading as neutral rather than penalised, and leans on signals
+ *   this wizard DOES collect instead: season (30% of the score), the
+ *   farmer's own soil-type answer in Step 2 (8%, a reasonable proxy —
+ *   black/alluvial soils skew fertile and neutral-to-alkaline, red/sandy
+ *   soils skew leaner and more acidic), and live soil-moisture/temperature
+ *   sensor readings (30% combined) where a sensor exists. Previous crop
+ *   (Step 3) adds a fertility signal too — a heavy feeder like chilli or
+ *   cotton is flagged as having likely drawn down nitrogen. Together that
+ *   covers most of the score without ever asking for a number the farmer
+ *   doesn't have.
+ * - After the final step, the app-wide farm-setup gate is refreshed
+ *   immediately (see useFarmSetup().refresh below). Without this, the
+ *   gate's cached "not set up yet" status stuck around after finishing the
+ *   wizard until a hard page reload, which is why farmers kept getting
+ *   bounced back to Farm Setup right after completing it.
  */
 
 const CATEGORIES = ['marginal', 'small', 'medium', 'large']
@@ -42,11 +62,12 @@ const SEASONS = ['kharif', 'rabi', 'zaid']
 const CROPS = ['soybean', 'wheat', 'chickpea', 'maize', 'cotton',
                'rice', 'tomato', 'onion', 'potato', 'chilli']
 
-const TOTAL_STEPS = 5
+const TOTAL_STEPS = 4
 
 export default function Onboarding() {
   const { t, tv } = useLanguage()
   const { publish } = usePageContext()
+  const { refresh: refreshFarmSetup } = useFarmSetup()
   const nav = useNavigate()
   const user = getUser()
   const isBalcony = user?.mode === 'balcony'
@@ -71,7 +92,6 @@ export default function Onboarding() {
     crop: '', variety: '', growth_stage: '', sowing_date: '',
     expected_harvest_date: '', crop_area_acres: '',
     area_unit: 'acre', water_availability: '',
-    nitrogen: '', phosphorus: '', potassium: '', ph: '',
     device_id: '',
   })
 
@@ -109,8 +129,7 @@ export default function Onboarding() {
     const out: any = {}
     Object.entries(form).forEach(([k, v]) => {
       if (v === '' || v === null || v === undefined) return
-      if (['land_size_acres', 'nitrogen', 'phosphorus', 'potassium', 'ph',
-           'previous_yield_qtl', 'crop_area_acres'].includes(k)) {
+      if (['land_size_acres', 'previous_yield_qtl', 'crop_area_acres'].includes(k)) {
         const n = Number(v)
         if (!Number.isNaN(n)) out[k] = n
       } else {
@@ -125,6 +144,13 @@ export default function Onboarding() {
     try {
       const s = await saveOnboarding(payload())
       setStatus(s)
+      // The app-wide farm-setup gate (FarmSetupProvider) fetched its status
+      // once at app load and never again, so as soon as state/district are
+      // saved it is stale. Refresh it on every save — not just the final
+      // one — so leaving this page early (including the "skip to dashboard"
+      // link below) never bounces the farmer back to a setup screen they
+      // already got past.
+      refreshFarmSetup()
       if (advance && step < TOTAL_STEPS) setStep(step + 1)
       else if (advance) nav('/crop-advisor')
     } catch {
@@ -443,30 +469,12 @@ export default function Onboarding() {
                 {t('ob.s4.harvesthint')}
               </p>
             </div>
-          </div>
-        )}
 
-        {/* ---------------- STEP 5: SOIL TEST ---------------- */}
-        {step === 5 && (
-          <div className="space-y-4">
-            <h3 className="font-semibold text-field-800">{t('ob.s5.title')}</h3>
-            <p className="text-xs text-gray-500">{t('ob.s5.optional')}</p>
-
-            <div className="grid grid-cols-2 gap-3">
-              <VoiceField label={t('soil.nitrogenN')} value={String(form.nitrogen)}
-                          onChange={(v) => set('nitrogen', v.replace(/[^\d.]/g, ''))}
-                          placeholder="38" />
-              <VoiceField label={t('soil.phosphorusP')} value={String(form.phosphorus)}
-                          onChange={(v) => set('phosphorus', v.replace(/[^\d.]/g, ''))}
-                          placeholder="22" />
-              <VoiceField label={t('soil.potassiumK')} value={String(form.potassium)}
-                          onChange={(v) => set('potassium', v.replace(/[^\d.]/g, ''))}
-                          placeholder="145" />
-              <VoiceField label={t('soil.ph')} value={String(form.ph)}
-                          onChange={(v) => set('ph', v.replace(/[^\d.]/g, ''))}
-                          placeholder="6.2" />
-            </div>
-
+            {/* No "enter your soil test" step: see the design note at the
+                top of this file for why NPK/pH is deliberately never asked
+                for here. A real lab or Soil Health Card result can still be
+                logged later from the Soil page — this wizard just never
+                blocks on a number the farmer doesn't have. */}
             {status && (
               <div className="border-t pt-3 text-xs">
                 <div className="flex items-center justify-between mb-1">

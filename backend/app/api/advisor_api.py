@@ -186,6 +186,13 @@ def onboarding_status(user: User = Depends(get_current_user),
             "location", "land size", "soil type", "irrigation",
             "previous crop"], "farm": None, "has_soil_test": False}
 
+    # "soil test" is deliberately NOT one of these checks. Almost nobody
+    # running this app owns an NPK/pH sensor or lab kit, so counting it
+    # against completeness meant the wizard could never reach 100% and kept
+    # nagging farmers about a number they have no way to produce. A real
+    # lab or Soil Health Card result can still be logged from the Soil page
+    # any time — has_soil_test below reflects that — it just isn't part of
+    # "have you finished setup".
     checks = {
         "location": bool(farm.state and farm.district),
         "land size": bool(farm.land_size_acres),
@@ -194,7 +201,6 @@ def onboarding_status(user: User = Depends(get_current_user),
         "previous crop": bool(farm.previous_crop),
         "current crop": bool(farm.crop),
         "sowing date": farm.sowing_date is not None,
-        "soil test": soil is not None,
     }
     missing = [k for k, ok in checks.items() if not ok]
     completeness = round(100 * sum(checks.values()) / len(checks))
