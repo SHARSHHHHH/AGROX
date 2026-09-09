@@ -554,3 +554,32 @@ def test_sensible_harvest_date_is_not_flagged(db, demo, farm):
     db.commit()
     crop = _run(fp.build_profile(db, demo))["current_crop"]
     assert crop["harvest_date_conflict"] is None
+
+
+# ------------------------------------------ next-crops-for-previous
+
+def test_next_crops_for_previous_needs_a_previous_crop(client, auth, db, farm):
+    farm.previous_crop = ""
+    db.commit()
+    assert client.get("/api/farm/next-crops-for-previous",
+                      headers=auth).json()["available"] is False
+
+
+def test_next_crops_for_previous_never_repeats_it(client, auth, db, farm):
+    farm.previous_crop = "wheat"
+    db.commit()
+    body = client.get("/api/farm/next-crops-for-previous", headers=auth).json()
+    assert body["available"] is True
+    recs = body["recommendations"]
+    assert len(recs) >= 3
+    assert all(r["crop"] != "wheat" for r in recs)
+
+
+def test_next_crops_for_previous_ranked_with_reasons(client, auth, db, farm):
+    farm.previous_crop = "rice"
+    db.commit()
+    recs = client.get("/api/farm/next-crops-for-previous",
+                      headers=auth).json()["recommendations"]
+    scores = [r["score"] for r in recs]
+    assert scores == sorted(scores, reverse=True)
+    assert all(r["why"] for r in recs)

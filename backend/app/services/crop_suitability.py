@@ -199,6 +199,13 @@ MP_CROPS: Dict[str, dict] = {
         "notes": "Long duration, so it occupies the field through the rabi "
                  "window. Deep black soil with good drainage is essential.",
     },
+    # NOTE: "chilli" is deliberately NOT here. It is offered in the onboarding
+    # wizard's crop dropdown, but this project holds no reviewed duration/
+    # pH/NPK reference data or lifecycle stages for it (see lifecycle.py).
+    # Adding a duration number without the same agronomic care as the crops
+    # above would be exactly the kind of invented data this module's own
+    # docstring warns against — better for previous_crop_check and the
+    # lifecycle explorer to both say "we don't know" than to guess.
 }
 
 # Weight per factor. pH and season dominate because they are the hardest for a

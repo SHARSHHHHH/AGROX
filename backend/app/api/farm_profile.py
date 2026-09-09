@@ -5,6 +5,7 @@ hand. Anything personalised reads /api/farm/profile once and works from that.
 """
 
 import logging
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -221,6 +222,73 @@ def _suitability_for(db: Session, user: User, crop_key: str) -> Dict[str, Any]:
     }
 
 
+def _rank_after(db: Session, farm: Farm, after_crop: str, ranking_season: str,
+                caution_crop: str = "", limit: int = 5) -> List[Dict[str, Any]]:
+    """Rank every MP crop as a follow-on to `after_crop`.
+
+    Shared by /next-crops (after the crop currently in the ground) and
+    /next-crops-for-previous (after a just-finished previous crop, used by
+    the onboarding wizard before any current crop is registered). Both are
+    the same question — "what suits this land next, given what was just
+    growing here" — so the scoring lives in one place.
+    """
+    from app.models.models import SoilTest
+    soil = (db.query(SoilTest).filter(SoilTest.user_id == farm.user_id)
+            .order_by(SoilTest.created_at.desc()).first())
+
+    after = (after_crop or "").strip().lower()
+    caution = (caution_crop or "").strip().lower()
+
+    ranked = []
+    for key, cspec in MP_CROPS.items():
+        if key == after:
+            continue    # never suggest repeating the crop just harvested
+        rot_score, rot_reason = rotation.score_rotation(after, key)
+        agro = score_crop(
+            key,
+            ph=soil.ph if soil else None,
+            nitrogen=soil.nitrogen if soil else None,
+            phosphorus=soil.phosphorus if soil else None,
+            potassium=soil.potassium if soil else None,
+            soil_type=farm.soil_type or "",
+            season=ranking_season,
+        )
+        # Rotation weighted heavily here: the question being asked IS a
+        # rotation question, unlike the general "what should I grow" ranking.
+        combined = round(0.55 * agro["score"] + 45 * rot_score, 1)
+
+        why = list(agro["reasons"][:2])
+        why.insert(0, rot_reason)
+        if caution and caution != after:
+            caution_score, caution_reason = rotation.score_rotation(caution, key)
+            if caution_score <= rotation.ROTATION_POOR:
+                why.append(f"Caution: {caution_reason}")
+
+        ranked.append({
+            "crop": key,
+            "display": cspec["display"],
+            "score": combined,
+            "rotation_score": round(rot_score * 100),
+            "agronomy_score": agro["score"],
+            "verdict": agro["verdict"],
+            "why": why,
+            "limitations": agro["limitations"][:3],
+            "duration_days": cspec["duration_days"],
+            "water_need": cspec["water_need"],
+            "family": rotation.family_of(key),
+        })
+
+    ranked.sort(key=lambda r: r["score"], reverse=True)
+    return ranked[:max(1, min(limit, 15))]
+
+
+SEASON_LABEL = {
+    "kharif": "Kharif (monsoon, June-October)",
+    "rabi": "Rabi (winter, November-March)",
+    "zaid": "Zaid (summer, April-May)",
+}
+
+
 @profile_router.get("/next-crops")
 def next_crops(limit: int = 5,
                user: User = Depends(get_current_user),
@@ -245,66 +313,18 @@ def next_crops(limit: int = 5,
                 "message": ("No current crop is registered. Add it during farm "
                             "setup to see what suits your land next.")}
 
-    from app.models.models import SoilTest
-    soil = (db.query(SoilTest).filter(SoilTest.user_id == user.id)
-            .order_by(SoilTest.created_at.desc()).first())
-
     # Season AFTER this crop comes off, not the season now — that is the whole
     # point of a "next crop" question.
     spec = MP_CROPS.get(current, {})
     duration = spec.get("duration_days")
-    from datetime import timedelta
     harvest = (farm.sowing_date + timedelta(days=duration)
                if farm.sowing_date and duration else None)
     next_season = current_season(harvest.date()) if harvest else None
 
-    ranked = []
-    for key, cspec in MP_CROPS.items():
-        if key == current:
-            continue    # never suggest repeating the crop just harvested
-        rot_score, rot_reason = rotation.score_rotation(current, key)
-        agro = score_crop(
-            key,
-            ph=soil.ph if soil else None,
-            nitrogen=soil.nitrogen if soil else None,
-            phosphorus=soil.phosphorus if soil else None,
-            potassium=soil.potassium if soil else None,
-            soil_type=farm.soil_type or "",
-            season=next_season or current_season(),
-        )
-        # Rotation weighted heavily here: the question being asked IS a
-        # rotation question, unlike the general "what should I grow" ranking.
-        combined = round(0.55 * agro["score"] + 45 * rot_score, 1)
-
-        why = list(agro["reasons"][:2])
-        why.insert(0, rot_reason)
-        if previous:
-            prev_score, prev_reason = rotation.score_rotation(previous, key)
-            if prev_score <= rotation.ROTATION_POOR:
-                why.append(f"Caution: {prev_reason}")
-
-        ranked.append({
-            "crop": key,
-            "display": cspec["display"],
-            "score": combined,
-            "rotation_score": round(rot_score * 100),
-            "agronomy_score": agro["score"],
-            "verdict": agro["verdict"],
-            "why": why,
-            "limitations": agro["limitations"][:3],
-            "duration_days": cspec["duration_days"],
-            "water_need": cspec["water_need"],
-            "family": rotation.family_of(key),
-        })
-
-    ranked.sort(key=lambda r: r["score"], reverse=True)
+    ranked = _rank_after(db, farm, current, next_season or current_season(),
+                         caution_crop=previous, limit=limit)
     n_carry, n_note = rotation.nitrogen_carryover(current)
 
-    season_label = {
-        "kharif": "Kharif (monsoon, June-October)",
-        "rabi": "Rabi (winter, November-March)",
-        "zaid": "Zaid (summer, April-May)",
-    }
     now_season = current_season()
     changing = bool(next_season) and next_season != now_season
 
@@ -319,21 +339,66 @@ def next_crops(limit: int = 5,
             + (f"After you harvest it"
                + (f" (around {harvest.date().strftime('%B %Y')})" if harvest else "")
                + f", the season will have moved to "
-                 f"{season_label.get(next_season, next_season)}"
+                 f"{SEASON_LABEL.get(next_season, next_season)}"
                if changing else
                f"After you harvest it, these crops suit your land next")
             + "."),
         "season_now": now_season,
-        "season_now_label": season_label.get(now_season, now_season),
+        "season_now_label": SEASON_LABEL.get(now_season, now_season),
         "season_changes": changing,
-        "next_season_label": season_label.get(next_season, next_season or ""),
+        "next_season_label": SEASON_LABEL.get(next_season, next_season or ""),
         "previous_crop": previous or None,
         "expected_harvest": harvest.date().isoformat() if harvest else None,
         "next_season": next_season,
         "nitrogen_carryover_kg": n_carry,
         "nitrogen_note": n_note,
-        "recommendations": ranked[:max(1, min(limit, 15))],
+        "recommendations": ranked,
         "note": ("Ranked for sowing after your current crop is harvested. "
+                 "Rotation is weighted heavily here because repeating the "
+                 "same family builds up pests and drains the same nutrients."),
+    }
+
+
+@profile_router.get("/next-crops-for-previous")
+def next_crops_for_previous(limit: int = 5,
+                            user: User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    """What to sow NOW, given the crop the farmer says just finished.
+
+    Used by the onboarding wizard: once a farmer names a previous crop that
+    has genuinely already been harvested (see previous_crop_check in
+    /api/onboarding/status), there is no current crop registered yet, so
+    /next-crops (which requires one) cannot answer "what next". This ranks
+    against previous_crop instead, for the season as of today rather than a
+    projected future season, since the field is empty right now.
+    """
+    farm = db.query(Farm).filter(Farm.user_id == user.id).first()
+    previous = (farm.previous_crop or "").strip().lower() if farm else ""
+    # "none" is the onboarding wizard's own explicit "no previous crop" pill
+    # value, not a crop name.
+    if not previous or previous == "none":
+        return {"available": False,
+                "message": "Add your previous crop during farm setup to see "
+                           "what suits your land next."}
+
+    ranked = _rank_after(db, farm, previous, current_season(), limit=limit)
+    n_carry, n_note = rotation.nitrogen_carryover(previous)
+    prev_spec = MP_CROPS.get(previous, {})
+    now_season = current_season()
+
+    return {
+        "available": True,
+        "previous_crop": {"crop": previous,
+                          "display": prev_spec.get("display", farm.previous_crop)},
+        "headline": (f"{prev_spec.get('display', farm.previous_crop)} is off the "
+                     f"field. These crops suit your land for the current "
+                     f"{SEASON_LABEL.get(now_season, now_season)} season."),
+        "season_now": now_season,
+        "season_now_label": SEASON_LABEL.get(now_season, now_season),
+        "nitrogen_carryover_kg": n_carry,
+        "nitrogen_note": n_note,
+        "recommendations": ranked,
+        "note": ("Ranked for sowing now, right after your previous crop. "
                  "Rotation is weighted heavily here because repeating the "
                  "same family builds up pests and drains the same nutrients."),
     }

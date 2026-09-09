@@ -200,6 +200,11 @@ export const getOnboardingStatus = () =>
   api.get('/api/onboarding/status').then((r) => r.data)
 export const saveOnboarding = (payload: any) =>
   api.post('/api/onboarding/save', payload).then((r) => r.data)
+// Moves a "previous crop" that turned out to still be growing into the
+// current-crop fields and clears the previous-crop ones — see
+// previous_crop_check in the onboarding status response.
+export const promotePreviousCrop = () =>
+  api.post('/api/onboarding/promote-previous-crop').then((r) => r.data)
 
 // ---- Crop advisor ----
 export const recommendAdvisory = (payload: any) =>
@@ -379,6 +384,10 @@ export const getCropLifecycleFor = (crop: string) =>
   api.get(`/api/farm/crop/${crop}/lifecycle`).then((r) => r.data)
 export const getNextCrops = (limit = 5) =>
   api.get('/api/farm/next-crops', { params: { limit } }).then((r) => r.data)
+// Same ranking, but keyed on the previous crop instead of the current one —
+// used by the onboarding wizard before any current crop is registered yet.
+export const getNextCropsForPrevious = (limit = 5) =>
+  api.get('/api/farm/next-crops-for-previous', { params: { limit } }).then((r) => r.data)
 
 // ---- Alerts: filters, summary, dismiss ----
 export const getAlertsFiltered = (params: Record<string, any> = {}) =>

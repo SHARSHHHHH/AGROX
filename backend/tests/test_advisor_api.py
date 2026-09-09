@@ -1,5 +1,7 @@
 """Onboarding, crop advisory and market-price endpoint tests."""
 
+from datetime import datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -168,6 +170,99 @@ def test_onboarding_never_invents_values(client, auth):
     after = client.get("/api/onboarding/status", headers=auth).json()
     assert before["farm"]["state"] == after["farm"]["state"]
     assert before["farm"]["land_size_acres"] == after["farm"]["land_size_acres"]
+
+
+# --------------------------------------------- previous_crop_check
+
+def test_previous_crop_still_growing_is_detected(client, auth):
+    """A short sowing date + a long-duration crop -> harvest is in the future.
+
+    The wizard uses this to recognise that what the farmer called
+    "previous" is actually still in the ground.
+    """
+    sowing = (datetime.utcnow() - timedelta(days=10)).date().isoformat()
+    r = client.post("/api/onboarding/save", headers=auth, json={
+        "previous_crop": "sugarcane",          # 330-day duration
+        "previous_sowing_date": sowing,
+    })
+    assert r.status_code == 200
+    check = r.json()["previous_crop_check"]
+    assert check["crop"] == "sugarcane"
+    assert check["duration_days"] == 330
+    assert check["still_growing"] is True
+    assert check["needs_manual_harvest_date"] is False
+
+
+def test_previous_crop_already_harvested_is_detected(client, auth):
+    """A sowing date far enough back that a short crop must be off the field."""
+    sowing = (datetime.utcnow() - timedelta(days=120)).date().isoformat()
+    r = client.post("/api/onboarding/save", headers=auth, json={
+        "previous_crop": "greengram",          # 65-day duration
+        "previous_sowing_date": sowing,
+    })
+    assert r.status_code == 200
+    check = r.json()["previous_crop_check"]
+    assert check["crop"] == "greengram"
+    assert check["still_growing"] is False
+
+
+def test_previous_crop_none_is_not_treated_as_a_crop(client, auth):
+    """"none" is the wizard's own "I had no previous crop" pill value, not a
+    crop name — it must not produce a check or a suggestion list."""
+    r = client.post("/api/onboarding/save", headers=auth,
+                    json={"previous_crop": "none"})
+    assert r.status_code == 200
+    assert r.json()["previous_crop_check"] is None
+    assert client.get("/api/farm/next-crops-for-previous",
+                      headers=auth).json()["available"] is False
+
+
+def test_previous_crop_without_duration_data_needs_manual_entry(client, auth):
+    """Chilli is offered in the onboarding wizard's own dropdown but has no
+    reviewed duration data in MP_CROPS (see crop_suitability.py) — the
+    wizard must fall back to asking rather than guessing a number."""
+    r = client.post("/api/onboarding/save", headers=auth, json={
+        "previous_crop": "chilli",
+        "previous_sowing_date": datetime.utcnow().date().isoformat(),
+    })
+    assert r.status_code == 200
+    check = r.json()["previous_crop_check"]
+    assert check["needs_manual_harvest_date"] is True
+    assert check["still_growing"] is None
+
+
+# ------------------------------------------------- promote-previous-crop
+
+def test_promote_previous_crop_moves_it_to_current(client, auth):
+    sowing = (datetime.utcnow() - timedelta(days=10)).date().isoformat()
+    client.post("/api/onboarding/save", headers=auth, json={
+        "previous_crop": "sugarcane", "previous_variety": "Co 86032",
+        "previous_sowing_date": sowing,
+    })
+
+    r = client.post("/api/onboarding/promote-previous-crop", headers=auth)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["farm"]["crop"] == "sugarcane"
+    assert body["farm"]["variety"] == "Co 86032"
+    assert body["farm"]["sowing_date"] == sowing
+    # The previous-crop fields must be cleared, not left duplicating the
+    # current crop — otherwise rotation advice would compare the crop
+    # against itself.
+    assert not body["farm"]["previous_crop"]
+    assert body["previous_crop_check"] is None
+
+
+def test_promote_previous_crop_requires_one_on_file(client, auth):
+    """Promoting once clears previous_crop, so a second call has nothing
+    left to promote and must fail rather than silently no-op."""
+    client.post("/api/onboarding/save", headers=auth, json={
+        "previous_crop": "wheat",
+        "previous_sowing_date": (datetime.utcnow() - timedelta(days=200)).date().isoformat(),
+    })
+    client.post("/api/onboarding/promote-previous-crop", headers=auth)
+    r = client.post("/api/onboarding/promote-previous-crop", headers=auth)
+    assert r.status_code == 400
 
 
 # ---------------------------------------------------------------- lifecycle

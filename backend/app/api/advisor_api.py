@@ -205,11 +205,49 @@ def onboarding_status(user: User = Depends(get_current_user),
     missing = [k for k, ok in checks.items() if not ok]
     completeness = round(100 * sum(checks.values()) / len(checks))
 
+    # ---- Previous-crop harvest check --------------------------------
+    # A farmer describing a "previous" crop may actually still be growing
+    # it — sowing date plus the crop's typical duration tells us which.
+    # This drives the onboarding wizard: if the computed harvest date is
+    # still in the future, what was entered as "previous" is really the
+    # CURRENT crop and the wizard should treat it as such rather than
+    # asking for a current crop separately; if it's already in the past,
+    # the field is genuinely empty and the wizard should move on to
+    # suggesting what to plant next. See /api/farm/next-crops-for-previous.
+    previous_crop_check = None
+    # "none" is the wizard's own explicit "I had no previous crop" pill
+    # value, not a crop name — must not be treated as one here.
+    if farm.previous_crop and farm.previous_crop.strip().lower() != "none":
+        prev_key = farm.previous_crop.strip().lower()
+        prev_spec = MP_CROPS.get(prev_key)
+        duration = prev_spec["duration_days"] if prev_spec else None
+        computed_harvest = None
+        if farm.previous_sowing_date and duration:
+            computed_harvest = (farm.previous_sowing_date
+                                + timedelta(days=duration)).date()
+        today = datetime.utcnow().date()
+        previous_crop_check = {
+            "crop": prev_key,
+            "display": prev_spec["display"] if prev_spec else farm.previous_crop,
+            "duration_days": duration,
+            "sowing_date": (farm.previous_sowing_date.date().isoformat()
+                            if farm.previous_sowing_date else None),
+            "computed_harvest_date": (computed_harvest.isoformat()
+                                      if computed_harvest else None),
+            # None (not False) when we cannot tell — no sowing date yet, or
+            # a crop we hold no duration data for. The wizard falls back to
+            # asking the farmer directly in that case rather than guessing.
+            "still_growing": (computed_harvest >= today
+                              if computed_harvest else None),
+            "needs_manual_harvest_date": duration is None,
+        }
+
     return {
         "onboarded": bool(farm.onboarded),
         "completeness": completeness,
         "missing": missing,
         "has_soil_test": soil is not None,
+        "previous_crop_check": previous_crop_check,
         "farm": {
             "name": farm.name,
             "state": farm.state, "district": farm.district, "village": farm.village,
@@ -221,8 +259,17 @@ def onboarding_status(user: User = Depends(get_current_user),
             "growing_medium": farm.growing_medium, "watering_method": farm.watering_method,
             "previous_crop": farm.previous_crop,
             "previous_season": farm.previous_season,
+            "previous_variety": farm.previous_variety,
+            "previous_sowing_date": (farm.previous_sowing_date.date().isoformat()
+                                     if farm.previous_sowing_date else None),
+            "previous_harvest_date": (farm.previous_harvest_date.date().isoformat()
+                                      if farm.previous_harvest_date else None),
+            "previous_yield_qtl": farm.previous_yield_qtl,
+            "previous_problems": farm.previous_problems,
             "crop": farm.crop, "variety": farm.variety, "growth_stage": farm.growth_stage,
             "sowing_date": farm.sowing_date.date().isoformat() if farm.sowing_date else None,
+            "expected_harvest_date": (farm.expected_harvest_date.date().isoformat()
+                                      if farm.expected_harvest_date else None),
             "latitude": farm.latitude, "longitude": farm.longitude,
             "device_id": farm.device_id, "farming_method": farm.farming_method,
         },
@@ -296,6 +343,50 @@ def save_onboarding(data: OnboardingIn,
 
     # Keep completion aligned with the shared profile guard. Recommended
     # fields can remain empty while the farmer finishes setup.
+    from app.services.farm_profile import REQUIRED_FIELDS
+    farm.onboarded = all(bool(getattr(farm, field, None)) for field in REQUIRED_FIELDS)
+
+    db.commit()
+    db.refresh(farm)
+    return onboarding_status(user, db)
+
+
+@onboarding_router.post("/promote-previous-crop")
+def promote_previous_crop(user: User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    """Correct a wizard mistake: what was entered as "previous crop" is
+    actually still growing.
+
+    Driven by previous_crop_check in /onboarding/status: when the computed
+    harvest date (previous crop's sowing date + its typical duration) is
+    still in the future, the crop the farmer described was never harvested
+    — it is their CURRENT crop, just answered under the wrong question,
+    most likely because it hasn't come off the field yet. Rather than make
+    them retype everything under "current crop", this moves the answer
+    across and clears the previous-crop fields, which /save cannot do on
+    its own (it only ever fills fields in, never clears one back to empty —
+    see the "never send blanks" rule there).
+    """
+    farm = db.query(Farm).filter(Farm.user_id == user.id).first()
+    if (farm is None or not (farm.previous_crop or "").strip()
+            or farm.previous_crop.strip().lower() == "none"):
+        raise HTTPException(400, "No previous crop on file to promote.")
+
+    farm.crop = farm.previous_crop
+    if farm.previous_variety:
+        farm.variety = farm.previous_variety
+    farm.sowing_date = farm.previous_sowing_date
+    # expected_harvest_date is left for farm_profile to derive from the crop
+    # + sowing date on read, same as everywhere else — see the NOTE above.
+
+    farm.previous_crop = ""
+    farm.previous_season = ""
+    farm.previous_variety = ""
+    farm.previous_sowing_date = None
+    farm.previous_harvest_date = None
+    farm.previous_yield_qtl = None
+    farm.previous_problems = ""
+
     from app.services.farm_profile import REQUIRED_FIELDS
     farm.onboarded = all(bool(getattr(farm, field, None)) for field in REQUIRED_FIELDS)
 

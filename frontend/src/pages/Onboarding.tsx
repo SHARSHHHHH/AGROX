@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getOnboardingStatus, saveOnboarding, reverseGeocode, getUser } from '../services/api'
+import { getOnboardingStatus, saveOnboarding, promotePreviousCrop,
+         getNextCropsForPrevious, reverseGeocode, getUser } from '../services/api'
 import { useLanguage } from '../contexts/LanguageContext'
 import { usePageContext } from '../contexts/PageContext'
 import { useFarmSetup } from '../components/FarmSetupGuard'
@@ -52,6 +53,24 @@ import { Card, Button, Spinner } from '../components/UI'
  *   gate's cached "not set up yet" status stuck around after finishing the
  *   wizard until a hard page reload, which is why farmers kept getting
  *   bounced back to Farm Setup right after completing it.
+ * - Step 3 (previous crop) no longer asks for a harvest date. Given a
+ *   sowing date, the crop's typical duration tells us when it was due to
+ *   be harvested, so we compute it (see previous_crop_check in the
+ *   onboarding status response) instead of asking a second date question.
+ *   That computation also decides where the wizard goes next:
+ *     - harvest date still in the future -> the farmer described their
+ *       CURRENT crop under the wrong question (it hasn't come off the
+ *       field yet). We correct that automatically (promotePreviousCrop)
+ *       and skip straight to the crop lifecycle view — there is no
+ *       "current crop" left to ask about, we already have it.
+ *     - harvest date in the past -> genuinely a previous crop. Step 4
+ *       becomes a ranked "what to plant next" suggestion list (rotation +
+ *       agronomy scored against that previous crop) instead of a bare
+ *       crop dropdown, with manual pick still available as a fallback.
+ *   A crop with no reviewed duration data (previous_crop_check.
+ *   needs_manual_harvest_date) falls back to asking the harvest date
+ *   directly rather than guessing — same no-invented-data rule as
+ *   everywhere else in this file.
  */
 
 const CATEGORIES = ['marginal', 'small', 'medium', 'large']
@@ -61,6 +80,25 @@ const WATER_SOURCES = ['borewell', 'canal', 'tank', 'river', 'rainfed']
 const SEASONS = ['kharif', 'rabi', 'zaid']
 const CROPS = ['soybean', 'wheat', 'chickpea', 'maize', 'cotton',
                'rice', 'tomato', 'onion', 'potato', 'chilli']
+
+// Typical days sowing-to-harvest, mirroring MP_CROPS in
+// backend/app/services/crop_suitability.py — kept here too so a picked
+// suggestion (which already carries its own duration_days) and a manually
+// picked crop can both show an estimated harvest date without a round
+// trip. "chilli" is deliberately absent: this app holds no reviewed
+// duration data for it (see the NOTE in MP_CROPS), so its harvest date is
+// simply not estimated rather than guessed.
+const CROP_DURATIONS: Record<string, number> = {
+  soybean: 95, wheat: 130, chickpea: 110, maize: 100, cotton: 165,
+  rice: 130, tomato: 120, onion: 120, potato: 100,
+}
+
+const todayISO = () => new Date().toISOString().slice(0, 10)
+const addDaysISO = (iso: string, days: number) => {
+  const d = new Date(iso)
+  d.setDate(d.getDate() + days)
+  return d.toISOString().slice(0, 10)
+}
 
 const TOTAL_STEPS = 4
 
@@ -79,6 +117,12 @@ export default function Onboarding() {
   const [gpsBusy, setGpsBusy] = useState(false)
   const [gpsError, setGpsError] = useState('')
   const [gpsPlace, setGpsPlace] = useState<any>(null)
+  // Step 4's "what to plant next" ranking, fetched once the previous crop
+  // is confirmed genuinely harvested. Null while unfetched/unavailable —
+  // that is also the signal to fall back to plain manual crop selection.
+  const [suggestions, setSuggestions] = useState<any>(null)
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false)
+  const [showOtherCrops, setShowOtherCrops] = useState(false)
 
   const [form, setForm] = useState<any>({
     name: '', state: user?.state || '', district: user?.district || '', village: '',
@@ -124,6 +168,27 @@ export default function Onboarding() {
 
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }))
 
+  /** Tapping a suggestion (or a manual crop pill) picks the current crop
+   * and, if the farmer hasn't already typed a sowing date, assumes sowing
+   * starts today — the natural default for "what am I planting now". */
+  const selectCurrentCrop = (cropKey: string) => {
+    setForm((f: any) => ({
+      ...f,
+      crop: cropKey,
+      sowing_date: f.sowing_date || todayISO(),
+    }))
+  }
+
+  /** Duration for the estimated-harvest line: prefer the figure the ranked
+   * suggestion already carries (it came straight from the backend's
+   * MP_CROPS), falling back to the local mirror for a manually-picked crop
+   * that never appeared in the suggestion list. */
+  const durationFor = (cropKey: string): number | null => {
+    const fromSuggestion = suggestions?.recommendations
+      ?.find((r: any) => r.crop === cropKey)?.duration_days
+    return fromSuggestion ?? CROP_DURATIONS[cropKey] ?? null
+  }
+
   /** Only send fields the farmer actually filled in — never blanks. */
   const payload = () => {
     const out: any = {}
@@ -139,6 +204,40 @@ export default function Onboarding() {
     return out
   }
 
+  // Step 3: keep previous_crop_check current as the farmer types, so the
+  // "estimated harvest" line below updates live instead of only after
+  // clicking Next. Debounced and silent — it's the same background save
+  // the wizard already does on every step, just not tied to a button.
+  useEffect(() => {
+    if (step !== 3) return
+    if (!form.previous_crop || form.previous_crop === 'none') return
+    if (!form.previous_sowing_date) return
+    const timer = setTimeout(() => {
+      saveOnboarding(payload()).then((s) => {
+        setStatus(s)
+        refreshFarmSetup()
+      }).catch(() => {})
+    }, 600)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, form.previous_crop, form.previous_sowing_date])
+
+  // Step 4: once it's established the previous crop is genuinely off the
+  // field, fetch what suits the land next. Re-fetches each time the
+  // farmer arrives at step 4, so going back and changing the previous
+  // crop produces a fresh ranking rather than a stale one.
+  useEffect(() => {
+    if (step !== 4) return
+    if (!form.previous_crop || form.previous_crop === 'none') { setSuggestions(null); return }
+    setSuggestionsLoading(true)
+    setShowOtherCrops(false)
+    getNextCropsForPrevious(5)
+      .then(setSuggestions)
+      .catch(() => setSuggestions(null))
+      .finally(() => setSuggestionsLoading(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step])
+
   const save = async (advance = true) => {
     setSaving(true)
     try {
@@ -151,8 +250,38 @@ export default function Onboarding() {
       // link below) never bounces the farmer back to a setup screen they
       // already got past.
       refreshFarmSetup()
-      if (advance && step < TOTAL_STEPS) setStep(step + 1)
-      else if (advance) nav('/crop-advisor')
+
+      if (!advance) return
+
+      // Step 3 is the one step whose "Next" does not simply move to the
+      // next step — see the design note at the top of this file. Every
+      // other step keeps the plain advance-or-finish behaviour below.
+      if (step === 3) {
+        const check = s.previous_crop_check
+        if (check?.still_growing) {
+          const promoted = await promotePreviousCrop()
+          setStatus(promoted)
+          refreshFarmSetup()
+          // There is no "current crop" left to ask about — we already
+          // have it — so land directly on its lifecycle instead of a
+          // step 4 that would just be asking the same question twice.
+          nav('/crop-advisor?tab=lifecycle')
+          return
+        }
+        setStep(4)
+        return
+      }
+
+      if (step < TOTAL_STEPS) {
+        setStep(step + 1)
+      } else {
+        // Whatever was picked in Step 4 — a ranked suggestion or a manual
+        // pick — is now the farm's current crop. The dashboard, crop
+        // advisor and lifecycle view all read it fresh from the farm
+        // profile on their own next load, so landing on the dashboard is
+        // enough to show it reflected everywhere.
+        nav('/dashboard')
+      }
     } catch {
       /* keep the user's answers on screen if the save fails */
     } finally {
@@ -382,13 +511,24 @@ export default function Onboarding() {
             </div>
 
             {/* Shown only once a previous crop is chosen — asking a farmer
-                with no history for its harvest date is just noise. */}
-            {form.previous_crop && form.previous_crop !== 'none' && (
-              <>
-                <VoiceField label={t('ob.s3.prevvariety')}
-                            value={form.previous_variety}
-                            onChange={(v) => set('previous_variety', v)} />
-                <div className="grid grid-cols-2 gap-3">
+                with no history for it is just noise. */}
+            {form.previous_crop && form.previous_crop !== 'none' && (() => {
+              const check = status?.previous_crop_check
+              // Ignore a check left over from a crop the farmer has since
+              // changed away from — the debounce effect above will refresh
+              // it shortly, but the display must not show stale numbers
+              // for the wrong crop in the meantime.
+              const fresh = check && check.crop === form.previous_crop.trim().toLowerCase()
+              const knowsHarvest = fresh && !!check.computed_harvest_date
+              const needsManual = fresh && check.needs_manual_harvest_date
+                && !!form.previous_sowing_date
+
+              return (
+                <>
+                  <VoiceField label={t('ob.s3.prevvariety')}
+                              value={form.previous_variety}
+                              onChange={(v) => set('previous_variety', v)} />
+
                   <div>
                     <label className="block text-xs font-semibold text-gray-600 mb-1">
                       {t('ob.s3.prevsowing')}
@@ -398,44 +538,149 @@ export default function Onboarding() {
                            className="w-full border rounded-xl px-3 py-2.5 text-sm
                                       outline-none focus:ring-2 focus:ring-field-600" />
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">
-                      {t('ob.s3.prevharvest')}
-                    </label>
-                    <input type="date" value={form.previous_harvest_date}
-                           onChange={(e) => set('previous_harvest_date', e.target.value)}
-                           className="w-full border rounded-xl px-3 py-2.5 text-sm
-                                      outline-none focus:ring-2 focus:ring-field-600" />
-                  </div>
-                </div>
-                <VoiceField label={t('ob.s3.prevyield')}
-                            value={String(form.previous_yield_qtl)}
-                            onChange={(v) => set('previous_yield_qtl',
-                                                 v.replace(/[^\d.]/g, ''))} />
-                {/* Last season's outbreak is the best predictor of this
-                    season's, so it feeds the pest advice later. */}
-                <VoiceField label={t('ob.s3.prevproblems')}
-                            value={form.previous_problems}
-                            onChange={(v) => set('previous_problems', v)} />
-              </>
-            )}
+
+                  {/* No manual "harvest date" question in the normal case —
+                      it's computed from the sowing date above plus this
+                      crop's typical duration. See the design note at the
+                      top of this file. */}
+                  {knowsHarvest && (
+                    <div className={`rounded-xl border p-2.5 text-sm ${
+                      check.still_growing
+                        ? 'border-amber-300 bg-amber-50 text-amber-900'
+                        : 'border-field-200 bg-field-50 text-field-800'}`}>
+                      <p className="font-semibold">
+                        {(check.still_growing ? '🌱 ' : '✓ ')
+                          + `Estimated harvest: ${check.computed_harvest_date} `
+                          + `(based on the typical ${check.duration_days}-day `
+                          + `${check.display} cycle)`}
+                      </p>
+                      <p className="text-xs mt-1 opacity-90">
+                        {check.still_growing
+                          ? "That's still ahead of today, so this crop is "
+                            + "probably still in the ground. We'll keep it "
+                            + 'as your current crop instead of asking again.'
+                          : "That's already behind us, so we'll ask what "
+                            + "you're planting next instead of a harvest date."}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Fallback: only reached when we hold no duration data
+                      for this crop (see CROP_DURATIONS / MP_CROPS) and so
+                      genuinely cannot compute anything — asking directly
+                      beats guessing. */}
+                  {needsManual && (
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">
+                        {t('ob.s3.prevharvest')}
+                      </label>
+                      <input type="date" value={form.previous_harvest_date}
+                             onChange={(e) => set('previous_harvest_date', e.target.value)}
+                             className="w-full border rounded-xl px-3 py-2.5 text-sm
+                                        outline-none focus:ring-2 focus:ring-field-600" />
+                      <p className="text-[11px] text-gray-500 mt-1">
+                        We don't have typical-duration data for {check.display} yet,
+                        so please let us know when it was (or will be) harvested.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Yield and problems only make sense for a crop that has
+                      actually been harvested — pointless (and a little
+                      strange) to ask about a crop we've just worked out is
+                      still standing in the field. */}
+                  {!(knowsHarvest && check.still_growing) && (
+                    <>
+                      <VoiceField label={t('ob.s3.prevyield')}
+                                  value={String(form.previous_yield_qtl)}
+                                  onChange={(v) => set('previous_yield_qtl',
+                                                       v.replace(/[^\d.]/g, ''))} />
+                      {/* Last season's outbreak is the best predictor of
+                          this season's, so it feeds the pest advice later. */}
+                      <VoiceField label={t('ob.s3.prevproblems')}
+                                  value={form.previous_problems}
+                                  onChange={(v) => set('previous_problems', v)} />
+                    </>
+                  )}
+                </>
+              )
+            })()}
           </div>
         )}
 
-        {/* ---------------- STEP 4: CURRENT CROP ---------------- */}
+        {/* ---------------- STEP 4: CURRENT / NEXT CROP ---------------- */}
         {step === 4 && (
           <div className="space-y-4">
-            <h3 className="font-semibold text-field-800">{t('ob.s4.title')}</h3>
+            <h3 className="font-semibold text-field-800">
+              {suggestions?.available ? 'What are you planting now?' : t('ob.s4.title')}
+            </h3>
             <p className="text-xs text-gray-500 bg-field-50 rounded-lg p-2">
-              💡 {t('ob.s4.why')}
+              💡 {suggestions?.available ? suggestions.headline : t('ob.s4.why')}
             </p>
 
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-                {t('ob.s4.crop')}
-              </label>
-              {pill('crop', form.crop, CROPS)}
-            </div>
+            {suggestionsLoading && (
+              <div className="py-4"><Spinner /></div>
+            )}
+
+            {!suggestionsLoading && suggestions?.available && (
+              <div className="space-y-2">
+                {suggestions.recommendations.map((r: any, i: number) => (
+                  <button key={r.crop} type="button"
+                          onClick={() => selectCurrentCrop(r.crop)}
+                          className={`w-full text-left border rounded-xl p-2.5 transition
+                            ${form.crop === r.crop
+                              ? 'border-field-600 bg-field-50 shadow-sm'
+                              : 'border-gray-200 hover:border-field-300 bg-white'}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-field-800 text-sm">
+                        #{i + 1} {r.display}
+                      </span>
+                      {/* Same score-bar + verdict pattern as the "Recommended
+                          next crops" panel on the dashboard, so a ranking
+                          reads the same way wherever it appears. */}
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {typeof r.score === 'number' && (
+                          <div className="w-16 h-2 rounded-full bg-gray-200 overflow-hidden">
+                            <div className="h-full bg-field-600"
+                                 style={{ width: `${Math.max(4, Math.min(100,
+                                   r.score <= 1 ? r.score * 100 : r.score))}%` }} />
+                          </div>
+                        )}
+                        <span className="text-[10px] text-gray-500">{r.verdict}</span>
+                      </div>
+                    </div>
+                    {r.why?.length > 0 && (
+                      <ul className="text-xs text-gray-600 list-disc ml-4 mt-1">
+                        {r.why.slice(0, 2).map((w: string, k: number) => <li key={k}>{w}</li>)}
+                      </ul>
+                    )}
+                  </button>
+                ))}
+
+                {!showOtherCrops ? (
+                  <button type="button" onClick={() => setShowOtherCrops(true)}
+                          className="text-xs text-field-700 font-semibold underline">
+                    Choose a different crop instead
+                  </button>
+                ) : (
+                  <div className="pt-1">
+                    <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                      {t('ob.s4.crop')}
+                    </label>
+                    {pill('crop', form.crop, CROPS)}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!suggestionsLoading && !suggestions?.available && (
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                  {t('ob.s4.crop')}
+                </label>
+                {pill('crop', form.crop, CROPS)}
+              </div>
+            )}
 
             <VoiceField label={t('ob.s4.variety')} value={form.variety}
                         onChange={(v) => set('variety', v)} />
@@ -457,18 +702,22 @@ export default function Onboarding() {
                         onChange={(v) => set('crop_area_acres',
                                              v.replace(/[^\d.]/g, ''))} />
 
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1">
-                {t('ob.s4.harvest')}
-              </label>
-              <input type="date" value={form.expected_harvest_date}
-                     onChange={(e) => set('expected_harvest_date', e.target.value)}
-                     className="w-full border rounded-xl px-3 py-2.5 text-sm
-                                outline-none focus:ring-2 focus:ring-field-600" />
-              <p className="text-[11px] text-gray-500 mt-1">
-                {t('ob.s4.harvesthint')}
-              </p>
-            </div>
+            {/* No manual "expected harvest date" question here either, for
+                the same reason as Step 3: it's computed from the sowing
+                date plus this crop's typical duration rather than asked
+                for and stored as a second, possibly-conflicting date. */}
+            {form.crop && form.sowing_date && (() => {
+              const duration = durationFor(form.crop)
+              if (duration == null) return null
+              return (
+                <div className="rounded-xl border border-field-200 bg-field-50 p-2.5 text-sm text-field-800">
+                  <p className="font-semibold">
+                    {`🌾 Estimated harvest: ${addDaysISO(form.sowing_date, duration)} `
+                      + `(based on the typical ${duration}-day cycle)`}
+                  </p>
+                </div>
+              )
+            })()}
 
             {/* No "enter your soil test" step: see the design note at the
                 top of this file for why NPK/pH is deliberately never asked
