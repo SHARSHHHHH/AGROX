@@ -52,6 +52,11 @@ export default function CropAdvisor() {
   const [result, setResult] = useState<any>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  // The farm's previous crop, for the "Where this data came from" panel —
+  // fetched once from the farm profile since this page has no previous-crop
+  // input of its own (that lives in the onboarding wizard); recommendAdvisory
+  // pulls it from the same farm record server-side when useMyData is on.
+  const [previousCrop, setPreviousCrop] = useState('')
   // Tracks which fields were auto-filled from the Farm Setup soil test, so
   // the "✓ filled from your farm setup" note only shows for those — and
   // disappears the moment the farmer edits a field themselves.
@@ -101,14 +106,45 @@ export default function CropAdvisor() {
 
     getOnboardingStatus().then((s) => {
       const soilType = s?.farm?.soil_type
-      if (!soilType) return
-      setForm((f) => {
-        if (f.soil_type !== '') return f
-        setPrefilled((p) => new Set([...p, 'soil_type']))
-        return { ...f, soil_type: soilType }
-      })
+      if (soilType) {
+        setForm((f) => {
+          if (f.soil_type !== '') return f
+          setPrefilled((p) => new Set([...p, 'soil_type']))
+          return { ...f, soil_type: soilType }
+        })
+      }
+      if (s?.farm?.previous_crop && s.farm.previous_crop !== 'none') {
+        setPreviousCrop(s.farm.previous_crop)
+      }
     }).catch(() => {})
   }, [])
+
+  /** What "You entered" actually means for one provenance row — the real
+   * value(s) behind the source tag, so the panel shows what was used
+   * instead of just where it came from. Returns '' when there is nothing
+   * more specific to add (the source label alone already says enough). */
+  const provenanceDetail = (key: string): string => {
+    if (key === 'soil') {
+      const parts: string[] = []
+      if (form.ph) parts.push(`pH ${form.ph}`)
+      if (form.soil_type) parts.push(tv(form.soil_type))
+      if (form.nitrogen) parts.push(`N ${form.nitrogen}`)
+      if (form.phosphorus) parts.push(`P ${form.phosphorus}`)
+      if (form.potassium) parts.push(`K ${form.potassium}`)
+      if (form.moisture) parts.push(`moisture ${form.moisture}%`)
+      return parts.join(', ')
+    }
+    if (key === 'previous_crop') return previousCrop ? tv(previousCrop) : ''
+    if (key === 'weather') {
+      const w = result?.weather_used
+      return w?.temperature != null ? `${w.temperature}°C` : ''
+    }
+    if (key === 'satellite') {
+      const sc = result?.satellite_context
+      return sc?.available && sc?.occupancy ? sc.occupancy.toLowerCase() : ''
+    }
+    return ''
+  }
 
   const analyze = async () => {
     setBusy(true); setErr(''); setResult(null)
@@ -311,16 +347,19 @@ export default function CropAdvisor() {
                       {t('adv.provenance')}
                     </p>
                     {Object.entries(result.provenance).map(([k, v]) => {
-                      // Get the actual measured value from form or result
-                      const fieldValue = form[k as keyof typeof form] || ''
-                      const displayValue = String(v) === 'MANUAL' && fieldValue
-                        ? `${fieldValue} (${t('src.' + v)})`
+                      // Show the actual value behind the source tag (e.g.
+                      // "pH 6.3, alluvial" or the previous crop's name)
+                      // rather than just the generic "You entered" label —
+                      // the label alone doesn't tell you WHAT was entered.
+                      const detail = String(v) === 'MISSING' ? '' : provenanceDetail(k)
+                      const displayValue = detail
+                        ? `${detail} (${t('src.' + v)})`
                         : t('src.' + v)
                       return (
-                        <div key={k} className="flex justify-between">
-                          <span className="text-gray-500 capitalize">{k}</span>
-                          <span className={String(v) === 'MISSING'
-                            ? 'text-gray-400' : 'text-green-700 font-medium'}>
+                        <div key={k} className="flex justify-between gap-2">
+                          <span className="text-gray-500 capitalize">{k.replace(/_/g, ' ')}</span>
+                          <span className={`text-right ${String(v) === 'MISSING'
+                            ? 'text-gray-400' : 'text-green-700 font-medium'}`}>
                             {displayValue}
                           </span>
                         </div>
